@@ -1,0 +1,7 @@
+/*
+Content-Security-Policy: default-src 'self'; connect-src 'self' https://hywxd7i5zg.execute-api.ap-south-1.amazonaws.com http://127.0.0.1:8000 http://localhost:8000; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'
+X-Content-Type-Options: nosniff
+Referrer-Policy: no-referrer
+Permissions-Policy: camera=(), microphone=(), geolocation=()
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+Cache-Control: no-store

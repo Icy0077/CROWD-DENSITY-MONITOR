@@ -1,50 +1,85 @@
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL || ''
 
 export const API_BASE_URL = configuredBaseUrl.replace(/\/$/, '')
+export const FACILITY_ID = import.meta.env.VITE_FACILITY_ID || ''
 
-export const MOCK_TELEMETRY = [
-  { location_id: 'library_01', timestamp: '2026-09-17T10:42:18Z', occupancy: 68, capacity: 100, occupancy_percentage: 68, people_in: 12, people_out: 4, estimated_wait_minutes: 8, status: 'yellow' },
-  { location_id: 'library_01', timestamp: '2026-09-17T10:40:03Z', occupancy: 51, capacity: 100, occupancy_percentage: 51, people_in: 7, people_out: 3, estimated_wait_minutes: 6, status: 'yellow' },
-  { location_id: 'library_01', timestamp: '2026-09-17T10:37:45Z', occupancy: 83, capacity: 100, occupancy_percentage: 83, people_in: 2, people_out: 10, estimated_wait_minutes: 10, status: 'red' },
-  { location_id: 'library_01', timestamp: '2026-09-17T10:35:11Z', occupancy: 62, capacity: 100, occupancy_percentage: 62, people_in: 19, people_out: 4, estimated_wait_minutes: 7, status: 'yellow' },
+const REQUIRED_TELEMETRY_FIELDS = [
+  'facility_id',
+  'timestamp',
+  'occupancy',
+  'capacity',
+  'inflow',
+  'outflow',
+  'estimated_wait_time',
+  'status',
+  'utilization',
 ]
 
+function firstDefined(record, ...fields) {
+  return fields.map((field) => record[field]).find((value) => value !== undefined && value !== null)
+}
+
 function getErrorMessage(error) {
-  return error instanceof Error ? error.message : 'Unable to load telemetry.'
+  return error instanceof Error && error.message === 'Telemetry response is invalid.'
+    ? error.message
+    : 'Unable to load telemetry right now.'
 }
 
 function normalizeTelemetryRecord(record) {
   if (!record || typeof record !== 'object') {
-    return record
+    throw new Error('Telemetry response must be an object.')
   }
 
-  const occupancy = Number(record.occupancy ?? 0)
-  const capacity = Number(record.capacity ?? 100)
-  const occupancyPercentage = Number(
-    record.occupancy_percentage ?? (capacity ? (occupancy / capacity) * 100 : 0),
-  )
+  const normalized = {
+    facility_id: firstDefined(record, 'facility_id', 'location_id'),
+    timestamp: record.timestamp,
+    occupancy: record.occupancy,
+    capacity: record.capacity,
+    inflow: firstDefined(record, 'inflow', 'people_in'),
+    outflow: firstDefined(record, 'outflow', 'people_out'),
+    estimated_wait_time: firstDefined(record, 'estimated_wait_time', 'estimated_wait_minutes'),
+    status: record.status,
+    utilization: firstDefined(record, 'utilization', 'occupancy_percentage'),
+  }
+  const missingFields = REQUIRED_TELEMETRY_FIELDS.filter((field) => normalized[field] === undefined || normalized[field] === null)
+  if (missingFields.length) {
+    throw new Error('Telemetry response is invalid.')
+  }
+
+  const numericFields = ['occupancy', 'capacity', 'inflow', 'outflow', 'estimated_wait_time', 'utilization']
+  if (!numericFields.every((field) => Number.isFinite(Number(normalized[field]))) || Number.isNaN(new Date(normalized.timestamp).getTime())) {
+    throw new Error('Telemetry response is invalid.')
+  }
 
   return {
-    location_id: record.location_id ?? record.facility_id ?? 'library_01',
-    timestamp: record.timestamp ?? new Date().toISOString(),
-    occupancy,
-    capacity,
-    occupancy_percentage: occupancyPercentage,
-    people_in: Number(record.people_in ?? record.inflow ?? 0),
-    people_out: Number(record.people_out ?? record.outflow ?? 0),
-    estimated_wait_minutes: Number(record.estimated_wait_minutes ?? record.wait_time ?? 0),
-    status: String(record.status ?? 'green').toLowerCase(),
+    facility_id: String(normalized.facility_id),
+    timestamp: normalized.timestamp,
+    occupancy: Number(normalized.occupancy),
+    capacity: Number(normalized.capacity),
+    inflow: Number(normalized.inflow),
+    outflow: Number(normalized.outflow),
+    estimated_wait_time: Number(normalized.estimated_wait_time),
+    status: ['green', 'yellow', 'red', 'unknown'].includes(String(normalized.status).toLowerCase()) ? String(normalized.status).toLowerCase() : 'unknown',
+    utilization: Number(normalized.utilization),
   }
 }
 
-async function requestTelemetry(path, fallbackData, options = {}) {
+async function requestTelemetry(path, options = {}) {
   if (!API_BASE_URL) {
-    console.info(`[telemetry] API base URL is not configured; using mock data for ${path}.`)
     return {
-      data: Array.isArray(fallbackData) ? fallbackData.map(normalizeTelemetryRecord) : normalizeTelemetryRecord(fallbackData),
-      error: null,
+      data: null,
+      error: 'VITE_API_BASE_URL is not configured.',
       loading: false,
-      source: 'mock',
+      source: 'api',
+    }
+  }
+
+  if (!FACILITY_ID) {
+    return {
+      data: null,
+      error: 'VITE_FACILITY_ID is not configured.',
+      loading: false,
+      source: 'api',
     }
   }
 
@@ -57,39 +92,28 @@ async function requestTelemetry(path, fallbackData, options = {}) {
       },
     })
 
+    const payload = await response.json().catch(() => null)
     if (!response.ok) {
-      throw new Error(`Telemetry request failed with status ${response.status}.`)
+      throw new Error(payload?.error || `Telemetry request failed with status ${response.status}.`)
     }
 
-    const payload = await response.json()
-    const normalizedPayload = Array.isArray(payload)
-      ? payload.map(normalizeTelemetryRecord)
-      : normalizeTelemetryRecord(payload)
-
-    const result = {
-      data: normalizedPayload,
+    return {
+      data: normalizeTelemetryRecord(payload),
       error: null,
       loading: false,
       source: 'api',
     }
-    console.info(`[telemetry] API request succeeded: ${path}`, result.data)
-    return result
   } catch (error) {
-    const result = {
-      data: Array.isArray(fallbackData) ? fallbackData.map(normalizeTelemetryRecord) : normalizeTelemetryRecord(fallbackData),
+    return {
+      data: null,
       error: getErrorMessage(error),
       loading: false,
-      source: 'mock',
+      source: 'api',
     }
-    console.warn(`[telemetry] API request failed: ${path}; using mock data.`, result.error)
-    return result
   }
 }
 
-export function getTelemetry(options) {
-  return requestTelemetry('/telemetry', MOCK_TELEMETRY, options)
-}
-
 export function getLatestTelemetry(options) {
-  return requestTelemetry('/telemetry/latest', MOCK_TELEMETRY[0], options)
+  const query = new URLSearchParams({ facility_id: FACILITY_ID })
+  return requestTelemetry(`/telemetry/latest?${query.toString()}`, options)
 }

@@ -1,0 +1,1 @@
+export default function NotFound() { return <main className="not-found"><p className="eyebrow">CloudCrowd Analytics</p><strong>404</strong><h1>Page not found</h1><p>This route does not belong to the monitoring report.</p><a href="/">Return to dashboard</a></main> }
