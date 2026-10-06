@@ -1,10 +1,17 @@
 import json
+import math
+import os
 from datetime import datetime, timezone
+import logging
 from numbers import Real
 
-from ..dynamodb.database import OccupancyStateStore
+from ..dynamodb.database import OccupancyStateStore, StaleTelemetryError
 
 
+LOGGER = logging.getLogger(__name__)
+LOGGER.setLevel(logging.INFO)
+MAX_FACILITY_ID_LENGTH = 128
+MAX_WAIT_MINUTES = 24 * 60
 REQUIRED_FIELDS = (
 	"location_id",
 	"timestamp",
@@ -26,14 +33,29 @@ def _status_for_percentage(occupancy_percentage):
 	return "red"
 
 
+def _validate_facility_id(value):
+	if not isinstance(value, str):
+		raise ValueError("facility_id must be a string")
+	value = value.strip()
+	if not value:
+		raise ValueError("facility_id must be a non-empty string")
+	if len(value) > MAX_FACILITY_ID_LENGTH:
+		raise ValueError(f"facility_id must be at most {MAX_FACILITY_ID_LENGTH} characters")
+	if any(ord(character) < 32 or ord(character) == 127 for character in value):
+		raise ValueError("facility_id contains invalid control characters")
+	return value
+
+
 def _normalize_timestamp(value):
-	if value is None:
-		return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-	if isinstance(value, datetime):
-		return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-	if isinstance(value, str):
-		return value.replace("+00:00", "Z") if value.endswith("+00:00") else value
-	raise ValueError("timestamp must be a non-empty string")
+	if not isinstance(value, str) or not value.strip():
+		raise ValueError("timestamp must be a non-empty ISO 8601 string")
+	try:
+		parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+	except ValueError as error:
+		raise ValueError("timestamp must be a valid ISO 8601 value") from error
+	if parsed.tzinfo is None or parsed.utcoffset() is None:
+		raise ValueError("timestamp must include a timezone")
+	return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _normalize_telemetry(telemetry):
@@ -41,32 +63,89 @@ def _normalize_telemetry(telemetry):
 		raise ValueError("Telemetry must be a JSON object")
 
 	normalized = dict(telemetry)
-	normalized["location_id"] = normalized.get("location_id", normalized.get("facility_id"))
-	normalized["people_in"] = normalized.get("people_in", normalized.get("inflow"))
-	normalized["people_out"] = normalized.get("people_out", normalized.get("outflow"))
-	normalized["estimated_wait_minutes"] = normalized.get(
-		"estimated_wait_minutes", normalized.get("wait_time")
+	edge_fields = {"facility_id", "timestamp", "occupancy", "inflow", "outflow"}
+	if set(normalized) == edge_fields:
+		try:
+			capacity = int(os.environ["FACILITY_CAPACITY"])
+		except (KeyError, TypeError, ValueError) as error:
+			raise ValueError("FACILITY_CAPACITY must be configured for edge telemetry") from error
+		if capacity <= 0:
+			raise ValueError("FACILITY_CAPACITY must be greater than zero")
+		occupancy = normalized["occupancy"]
+		percentage = round((occupancy / capacity) * 100) if isinstance(occupancy, int) else None
+		normalized.update(
+			location_id=normalized["facility_id"],
+			people_in=normalized["inflow"],
+			people_out=normalized["outflow"],
+			capacity=capacity,
+			occupancy_percentage=percentage,
+			estimated_wait_minutes=0,
+			status=_status_for_percentage(percentage) if percentage is not None else None,
+		)
+
+	legacy_fields = {
+		"location_id": "facility_id",
+		"people_in": "inflow",
+		"people_out": "outflow",
+		"estimated_wait_minutes": "wait_time",
+	}
+	for field, legacy_field in legacy_fields.items():
+		if field not in normalized and legacy_field in normalized:
+			normalized[field] = normalized[legacy_field]
+
+	allowed_fields = set(REQUIRED_FIELDS) | set(legacy_fields.values())
+	unexpected = sorted(set(normalized) - allowed_fields)
+	if unexpected:
+		raise ValueError(f"Unexpected telemetry fields: {', '.join(unexpected)}")
+	missing = [field for field in REQUIRED_FIELDS if field not in normalized]
+	if missing:
+		raise ValueError(f"Missing telemetry fields: {', '.join(missing)}")
+	normalized["location_id"] = _validate_facility_id(normalized["location_id"])
+	integer_fields = (
+		"occupancy",
+		"capacity",
+		"people_in",
+		"people_out",
+		"estimated_wait_minutes",
 	)
-	normalized["capacity"] = normalized.get("capacity")
-	if not normalized["location_id"] or not isinstance(normalized["location_id"], str):
-		raise ValueError("location_id must be a non-empty string")
 	if any(
-		isinstance(normalized[field], bool) or not isinstance(normalized[field], Real)
-		for field in ("occupancy", "people_in", "people_out", "estimated_wait_minutes", "capacity")
+		isinstance(normalized[field], bool) or not isinstance(normalized[field], int)
+		for field in integer_fields
 	):
-		raise ValueError("occupancy, people_in, people_out, estimated_wait_minutes, and capacity must be numbers")
+		raise ValueError(f"{', '.join(integer_fields)} must be integers")
 	if any(normalized[field] < 0 for field in ("occupancy", "people_in", "people_out", "estimated_wait_minutes")):
 		raise ValueError("occupancy, people_in, people_out, and estimated_wait_minutes cannot be negative")
 	if normalized["capacity"] <= 0:
 		raise ValueError("capacity must be greater than zero")
+	if normalized["occupancy"] > normalized["capacity"]:
+		raise ValueError("occupancy cannot exceed capacity")
+	percentage = normalized["occupancy_percentage"]
+	if (
+		isinstance(percentage, bool)
+		or not isinstance(percentage, Real)
+		or not math.isfinite(float(percentage))
+		or percentage < 0
+	):
+		raise ValueError("occupancy_percentage must be a finite non-negative number")
+	computed_percentage = round((normalized["occupancy"] / normalized["capacity"]) * 100)
+	if percentage != computed_percentage:
+		raise ValueError("occupancy_percentage does not match occupancy and capacity")
+	if not isinstance(normalized["status"], str) or normalized["status"] not in {"green", "yellow", "red"}:
+		raise ValueError("status must be green, yellow, or red")
+	if normalized["status"] != _status_for_percentage(computed_percentage):
+		raise ValueError("status does not match occupancy_percentage")
 
-	normalized["timestamp"] = _normalize_timestamp(normalized.get("timestamp"))
-	normalized["occupancy_percentage"] = normalized.get(
-		"occupancy_percentage",
-		round((normalized["occupancy"] / normalized["capacity"]) * 100) if normalized["capacity"] else 0,
-	)
-	normalized["status"] = normalized.get("status", _status_for_percentage(normalized["occupancy_percentage"]))
-	return normalized
+	return {
+		"location_id": normalized["location_id"],
+		"timestamp": _normalize_timestamp(normalized["timestamp"]),
+		"occupancy": normalized["occupancy"],
+		"capacity": normalized["capacity"],
+		"occupancy_percentage": computed_percentage,
+		"people_in": normalized["people_in"],
+		"people_out": normalized["people_out"],
+		"estimated_wait_minutes": normalized["estimated_wait_minutes"],
+		"status": normalized["status"],
+	}
 
 
 def parse_event(event):
@@ -76,6 +155,8 @@ def parse_event(event):
 	body = event.get("body")
 	if body is None:
 		return event
+	if isinstance(body, bytes):
+		body = body.decode("utf-8")
 	if isinstance(body, str):
 		return json.loads(body)
 	if isinstance(body, dict):
@@ -95,19 +176,59 @@ def validate_telemetry(telemetry):
 	return normalized
 
 
-def calculate_wait_time(occupancy, arrival_rate):
-	if arrival_rate == 0:
+def calculate_wait_time(occupancy, people_in, reporting_interval_seconds=60):
+	"""Estimate wait in minutes using Little's Law.
+
+	``people_in`` is a count observed during ``reporting_interval_seconds``.
+	It is converted to arrivals per minute before applying W = L / lambda,
+	where L is occupancy in people and W is the resulting wait in minutes.
+	A zero count means no arrival-rate signal is available, so the safe result
+	is zero. Results are bounded to one day to prevent bad rates producing an
+	unbounded dashboard value.
+	"""
+	if any(
+		isinstance(value, bool)
+		or not isinstance(value, Real)
+		or not math.isfinite(float(value))
+		or value < 0
+		for value in (occupancy, people_in, reporting_interval_seconds)
+	):
+		raise ValueError("occupancy, people_in, and reporting_interval_seconds must be finite non-negative numbers")
+	if reporting_interval_seconds == 0:
+		raise ValueError("reporting_interval_seconds must be greater than zero")
+	if people_in == 0:
 		return 0
-	return round(occupancy / arrival_rate)
+	arrival_rate_per_minute = people_in / (reporting_interval_seconds / 60)
+	return min(MAX_WAIT_MINUTES, max(0, round(occupancy / arrival_rate_per_minute)))
 
 
-def process_telemetry(telemetry, state_store):
+def _configured_reporting_interval():
+	value = os.getenv("REPORTING_INTERVAL_SECONDS", "60")
+	try:
+		interval = float(value)
+	except (TypeError, ValueError) as error:
+		raise ValueError("REPORTING_INTERVAL_SECONDS must be a positive number") from error
+	if not math.isfinite(interval) or interval <= 0:
+		raise ValueError("REPORTING_INTERVAL_SECONDS must be a positive number")
+	return interval
+
+
+def process_telemetry(telemetry, state_store, reporting_interval_seconds=None):
 	processed = validate_telemetry(telemetry)
+	if reporting_interval_seconds is None:
+		reporting_interval_seconds = _configured_reporting_interval()
 	processed["estimated_wait_minutes"] = calculate_wait_time(
-		processed["occupancy"], processed["people_in"]
+		processed["occupancy"],
+		processed["people_in"],
+		reporting_interval_seconds=reporting_interval_seconds,
 	)
 	processed["status"] = _status_for_percentage(processed["occupancy_percentage"])
 	state_store.save_state(processed)
+	LOGGER.info(
+		"Processed telemetry location_id=%s timestamp=%s",
+		processed["location_id"],
+		processed["timestamp"],
+	)
 	return {
 		"accepted": True,
 		"telemetry": processed,
@@ -117,12 +238,24 @@ def process_telemetry(telemetry, state_store):
 def lambda_handler(event, context=None, state_store=None):
 	try:
 		telemetry = validate_telemetry(parse_event(event))
-		store = state_store or OccupancyStateStore()
-		response = process_telemetry(telemetry, store)
-	except (TypeError, ValueError, json.JSONDecodeError) as error:
+	except (TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError) as error:
 		return {
 			"statusCode": 400,
 			"body": json.dumps({"accepted": False, "error": str(error)}),
+		}
+
+	try:
+		store = state_store if state_store is not None else OccupancyStateStore()
+		response = process_telemetry(telemetry, store)
+	except StaleTelemetryError:
+		return {
+			"statusCode": 202,
+			"body": json.dumps({"accepted": False, "error": "Telemetry timestamp is older than stored state"}),
+		}
+	except Exception:
+		return {
+			"statusCode": 500,
+			"body": json.dumps({"accepted": False, "error": "Unable to process telemetry"}),
 		}
 
 	return {

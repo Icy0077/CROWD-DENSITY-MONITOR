@@ -19,14 +19,6 @@ AWS_IOT_CONFIG_VARS = (
 )
 
 
-def _status_for_percentage(occupancy_percentage):
-	if occupancy_percentage < 50:
-		return "green"
-	if occupancy_percentage <= 80:
-		return "yellow"
-	return "red"
-
-
 def _normalize_timestamp(value=None):
 	if value is None:
 		value = datetime.now(timezone.utc)
@@ -37,22 +29,20 @@ def _normalize_timestamp(value=None):
 	raise ValueError("timestamp must be a datetime or ISO 8601 string")
 
 
-def build_telemetry(location_id, occupancy, people_in, people_out, timestamp=None, capacity=100):
-	capacity = int(capacity or 100)
-	occupancy = int(occupancy)
-	people_in = int(people_in)
-	people_out = int(people_out)
-	occupancy_percentage = round((occupancy / capacity) * 100) if capacity else 0
+def build_telemetry(facility_id, occupancy, inflow, outflow, timestamp=None):
+	if not isinstance(facility_id, str) or not facility_id.strip():
+		raise ValueError("facility_id must be a non-empty string")
+	counts = {"occupancy": occupancy, "inflow": inflow, "outflow": outflow}
+	if any(isinstance(value, bool) or not isinstance(value, int) for value in counts.values()):
+		raise ValueError("occupancy, inflow, and outflow must be integers")
+	if any(value < 0 for value in counts.values()):
+		raise ValueError("occupancy, inflow, and outflow cannot be negative")
 	return {
-		"location_id": location_id,
+		"facility_id": facility_id,
 		"timestamp": _normalize_timestamp(timestamp),
 		"occupancy": occupancy,
-		"capacity": capacity,
-		"occupancy_percentage": occupancy_percentage,
-		"people_in": people_in,
-		"people_out": people_out,
-		"estimated_wait_minutes": 0,
-		"status": _status_for_percentage(occupancy_percentage),
+		"inflow": inflow,
+		"outflow": outflow,
 	}
 
 
@@ -72,7 +62,8 @@ class MqttPublisher:
 			self.client_id = os.getenv("MQTT_CLIENT_ID") or None
 		self.username = os.getenv("MQTT_USERNAME")
 		self.password = os.getenv("MQTT_PASSWORD")
-		self.keepalive = int(os.getenv("MQTT_KEEPALIVE", "60"))
+		keepalive_name = "AWS_IOT_KEEPALIVE" if self.aws_iot_enabled else "MQTT_KEEPALIVE"
+		self.keepalive = int(os.getenv(keepalive_name, "60"))
 		self.qos = int(os.getenv("MQTT_QOS", "1"))
 		self.retain = os.getenv("MQTT_RETAIN", "false").lower() == "true"
 		self.use_tls = self.aws_iot_enabled or os.getenv("MQTT_TLS", "false").lower() == "true"

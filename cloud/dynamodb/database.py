@@ -1,7 +1,11 @@
 import os
+import math
+from datetime import datetime, timezone
 from decimal import Decimal
+from numbers import Real
 
 import boto3
+from botocore.exceptions import ClientError
 
 
 STATE_FIELDS = (
@@ -15,6 +19,11 @@ STATE_FIELDS = (
 	"estimated_wait_minutes",
 	"status",
 )
+MAX_FACILITY_ID_LENGTH = 128
+
+
+class StaleTelemetryError(Exception):
+	"""Raised when an older telemetry record would replace newer state."""
 
 
 def _status_for_percentage(occupancy_percentage):
@@ -23,6 +32,31 @@ def _status_for_percentage(occupancy_percentage):
 	if occupancy_percentage <= 80:
 		return "yellow"
 	return "red"
+
+
+def _validate_facility_id(value):
+	if not isinstance(value, str):
+		raise ValueError("location_id must be a string")
+	value = value.strip()
+	if not value:
+		raise ValueError("location_id must be a non-empty string")
+	if len(value) > MAX_FACILITY_ID_LENGTH:
+		raise ValueError(f"location_id must be at most {MAX_FACILITY_ID_LENGTH} characters")
+	if any(ord(character) < 32 or ord(character) == 127 for character in value):
+		raise ValueError("location_id contains invalid control characters")
+	return value
+
+
+def _normalize_timestamp(value):
+	if not isinstance(value, str) or not value.strip():
+		raise ValueError("timestamp must be a non-empty ISO 8601 string")
+	try:
+		parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+	except ValueError as error:
+		raise ValueError("timestamp must be a valid ISO 8601 value") from error
+	if parsed.tzinfo is None or parsed.utcoffset() is None:
+		raise ValueError("timestamp must include a timezone")
+	return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _to_dynamodb_value(value):
@@ -35,30 +69,61 @@ def _to_dynamodb_value(value):
 	return value
 
 
-def _normalize_state(state):
+def normalize_state(state):
 	if state is None:
 		return None
+	if not isinstance(state, dict):
+		raise ValueError("State must be an object")
 	state = dict(state)
-	state["location_id"] = state.get("location_id", state.get("facility_id"))
-	state["people_in"] = state.get("people_in", state.get("inflow", 0))
-	state["people_out"] = state.get("people_out", state.get("outflow", 0))
-	state["estimated_wait_minutes"] = state.get(
-		"estimated_wait_minutes", state.get("wait_time", 0)
-	)
-	state["capacity"] = state.get("capacity", 100)
-	state["capacity"] = int(state["capacity"])
-	state["occupancy"] = int(state.get("occupancy", 0))
-	state["people_in"] = int(state["people_in"])
-	state["people_out"] = int(state["people_out"])
-	state["estimated_wait_minutes"] = int(state["estimated_wait_minutes"])
+	for field, legacy_field in {
+		"location_id": "facility_id",
+		"people_in": "inflow",
+		"people_out": "outflow",
+		"estimated_wait_minutes": "wait_time",
+	}.items():
+		if field not in state and legacy_field in state:
+			state[field] = state[legacy_field]
+
+	missing = [field for field in STATE_FIELDS if field not in state]
+	if missing:
+		raise ValueError(f"Missing state fields: {', '.join(missing)}")
+	state["location_id"] = _validate_facility_id(state["location_id"])
+	state["timestamp"] = _normalize_timestamp(state["timestamp"])
+	integer_fields = ("occupancy", "capacity", "people_in", "people_out", "estimated_wait_minutes")
+	for field in integer_fields:
+		value = state[field]
+		if isinstance(value, bool) or not isinstance(value, (Real, Decimal)):
+			raise ValueError(f"{field} must be an integer")
+		try:
+			integer_value = int(value)
+			finite_value = math.isfinite(float(value))
+		except (OverflowError, ValueError):
+			raise ValueError(f"{field} must be a finite integer") from None
+		if not finite_value or integer_value != value:
+			raise ValueError(f"{field} must be a finite integer")
+		state[field] = integer_value
+	if any(state[field] < 0 for field in ("occupancy", "people_in", "people_out", "estimated_wait_minutes")):
+		raise ValueError("occupancy and counts cannot be negative")
 	if state["capacity"] <= 0:
 		raise ValueError("capacity must be greater than zero")
-	state["occupancy_percentage"] = state.get(
-		"occupancy_percentage",
-		round((state["occupancy"] / state["capacity"]) * 100) if state["capacity"] else 0,
-	)
-	state["status"] = state.get("status", _status_for_percentage(state["occupancy_percentage"]))
-	return state
+	if state["occupancy"] > state["capacity"]:
+		raise ValueError("occupancy cannot exceed capacity")
+	percentage = state["occupancy_percentage"]
+	if (
+		isinstance(percentage, bool)
+		or not isinstance(percentage, (Real, Decimal))
+		or not math.isfinite(float(percentage))
+		or percentage != round((state["occupancy"] / state["capacity"]) * 100)
+	):
+		raise ValueError("occupancy_percentage does not match occupancy and capacity")
+	state["occupancy_percentage"] = round((state["occupancy"] / state["capacity"]) * 100)
+	expected_status = _status_for_percentage(state["occupancy_percentage"])
+	if state["status"] != expected_status:
+		raise ValueError("status does not match occupancy_percentage")
+	return {field: state[field] for field in STATE_FIELDS}
+
+
+_normalize_state = normalize_state
 
 
 class OccupancyStateStore:
@@ -73,20 +138,27 @@ class OccupancyStateStore:
 		self.table = resource.Table(self.table_name)
 
 	def save_state(self, state):
-		normalized = _normalize_state(state)
-		missing = [field for field in ("location_id", "occupancy", "timestamp") if field not in normalized]
-		if missing:
-			raise ValueError(f"Missing state fields: {', '.join(missing)}")
-
+		normalized = normalize_state(state)
 		item = {
 			field: normalized[field]
 			for field in STATE_FIELDS
 			if field in normalized
 		}
-		self.table.put_item(Item=_to_dynamodb_value(item))
+		try:
+			self.table.put_item(
+				Item=_to_dynamodb_value(item),
+				ConditionExpression="attribute_not_exists(#location_id) OR #timestamp <= :timestamp",
+				ExpressionAttributeNames={"#location_id": "location_id", "#timestamp": "timestamp"},
+				ExpressionAttributeValues={":timestamp": item["timestamp"]},
+			)
+		except ClientError as error:
+			if error.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+				raise StaleTelemetryError("telemetry timestamp is older than stored state") from error
+			raise
 		return item
 
 	def get_state(self, facility_id):
-		response = self.table.get_item(Key={"location_id": facility_id})
+		facility_id = _validate_facility_id(facility_id)
+		response = self.table.get_item(Key={"location_id": facility_id}, ConsistentRead=True)
 		item = response.get("Item")
-		return _normalize_state(item)
+		return normalize_state(item)

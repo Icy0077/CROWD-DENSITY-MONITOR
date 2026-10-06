@@ -63,9 +63,8 @@ def run_test(timeout):
     expected_payload = build_telemetry(
         "aws_iot_connection_test",
         occupancy=0,
-        people_in=0,
-        people_out=0,
-        capacity=100,
+        inflow=0,
+        outflow=0,
     )
     received_payload = []
 

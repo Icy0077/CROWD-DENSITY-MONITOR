@@ -115,13 +115,13 @@ Result: `True` for exact key match, and the generated JSON matches the documente
 
 ## Privacy cleanup validation
 
-The privacy layer encrypts the frame handling path by returning a blurred frame instead of leaving raw frame data in the pipeline state. Validation confirmed:
+After local inference, the privacy layer blurs the camera frame in place. This is an in-memory transformation, not a guarantee that people are unidentifiable. The edge pipeline passes only aggregate telemetry to MQTT and has no frame-writing step. Validation confirmed:
 
-- `PrivacyDrop.drop(frame)` returns a processed frame with a valid shape
-- no frame files were created under the `data` tree during validation
-- no raw media artifacts were found under `data`
+- `PrivacyDrop.drop(frame)` overwrites the local frame buffer with blurred pixels
+- frame data is not included in the telemetry payload
+- the edge pipeline does not write frames to disk
 
-Result: raw frames are not permanently saved by the local pipeline path.
+Result: in the inspected pipeline path, frames remain local to inference and are not published or written to disk. Blurring does not establish an identity-anonymization guarantee.
 
 ## Error handling validation
 

@@ -27,11 +27,11 @@ The dashboard consumes the canonical fields from `docs/telemetry-schema.md`:
 
 - A successful API response updates the existing dashboard with live occupancy, capacity, status, IN/OUT counts, wait time, timestamp, and location.
 - A loading indicator displays `Loading telemetry` during the request.
-- HTTP failures or network errors display the API error and use schema-shaped mock telemetry.
-- The sidebar identifies whether the current data source is `Live API mode` or `Mock data mode`.
+- HTTP failures or network errors display the API error without showing fabricated telemetry.
+- The sidebar identifies that the dashboard is in `Live API mode`.
 - No credentials or secrets are embedded in the frontend.
 - The dashboard layout and existing visual structure are unchanged.
 
 ## Verification status
 
-The source integration was reviewed against the API response schema and the API service normalizes both API and fallback records to the canonical field names. The production build could not be executed in this environment because Node.js/npm is not installed or available on `PATH`.
+The source integration was reviewed against the API response schema. The frontend build is verified with `npm run build`.

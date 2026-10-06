@@ -1,0 +1,265 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CloudCrowdAnalytics IoT ingestion, latest-state storage, and read API
+
+Parameters:
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket containing the packaged cloud Lambda code
+  LambdaCodeKey:
+    Type: String
+    Default: cloudcrowd-lambda-faa8977df322.zip
+    Description: S3 key for the packaged cloud Lambda ZIP
+  FacilityCapacity:
+    Type: Number
+    MinValue: 1
+    Description: Configured capacity for the monitored facility
+  ReportingIntervalSeconds:
+    Type: Number
+    Default: 60
+    MinValue: 1
+    Description: Interval represented by the edge inflow and outflow counts
+  DefaultFacilityId:
+    Type: String
+    Description: Facility returned by GET /telemetry/latest when no query parameter is supplied
+  TableName:
+    Type: String
+    Default: cloudcrowd-occupancy
+  IotTopic:
+    Type: String
+    Default: cloudcrowd/telemetry
+  IotClientId:
+    Type: String
+    Description: MQTT client ID attached to the device certificate policy
+  IotCertificateArn:
+    Type: String
+    Description: ARN of the provisioned AWS IoT device certificate
+  ApiStageName:
+    Type: String
+    Default: prod
+
+Resources:
+  TelemetryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref TableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: location_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: location_id
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+
+  ProcessorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: WriteLatestFacilityState
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt TelemetryTable.Arn
+
+  ApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ReadLatestFacilityState
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:GetItem
+                Resource: !GetAtt TelemetryTable.Arn
+
+  TelemetryProcessor:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: cloud.lambda.handler.lambda_handler
+      Role: !GetAtt ProcessorRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref LambdaCodeKey
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref TelemetryTable
+          FACILITY_CAPACITY: !Ref FacilityCapacity
+          REPORTING_INTERVAL_SECONDS: !Ref ReportingIntervalSeconds
+
+  ApiHandler:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: cloud.api.routes.lambda_handler
+      Role: !GetAtt ApiRole.Arn
+      Timeout: 15
+      MemorySize: 128
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref LambdaCodeKey
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref TelemetryTable
+          DEFAULT_FACILITY_ID: !Ref DefaultFacilityId
+
+  IoTTelemetryRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: CloudCrowdTelemetryToLambda
+      TopicRulePayload:
+        RuleDisabled: false
+        AwsIotSqlVersion: "2016-03-23"
+        Sql: !Sub "SELECT * FROM '${IotTopic}'"
+        Actions:
+          - Lambda:
+              FunctionArn: !GetAtt TelemetryProcessor.Arn
+
+  IoTLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref TelemetryProcessor
+      Principal: iot.amazonaws.com
+      SourceArn: !GetAtt IoTTelemetryRule.Arn
+
+  DevicePolicy:
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyName: !Sub ${AWS::StackName}-CloudCrowdDevicePolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: iot:Connect
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${IotClientId}
+          - Effect: Allow
+            Action: iot:Publish
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/${IotTopic}
+          - Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/${IotTopic}
+          - Effect: Allow
+            Action: iot:Receive
+            Resource: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/${IotTopic}
+
+  DevicePolicyAttachment:
+    Type: AWS::IoT::PolicyPrincipalAttachment
+    Properties:
+      PolicyName: !Ref DevicePolicy
+      Principal: !Ref IotCertificateArn
+
+  TelemetryApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub ${AWS::StackName}-telemetry
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  TelemetryResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref TelemetryApi
+      ParentId: !GetAtt TelemetryApi.RootResourceId
+      PathPart: telemetry
+
+  LatestResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref TelemetryApi
+      ParentId: !Ref TelemetryResource
+      PathPart: latest
+
+  LatestGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref TelemetryApi
+      ResourceId: !Ref LatestResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiHandler.Arn}/invocations
+
+  LatestOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref TelemetryApi
+      ResourceId: !Ref LatestResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Accept,Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: "{}"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+          ResponseModels:
+            application/json: Empty
+
+  ApiLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ApiHandler
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${TelemetryApi}/*/GET/telemetry/latest
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - LatestGetMethod
+      - LatestOptionsMethod
+    Properties:
+      RestApiId: !Ref TelemetryApi
+      StageName: !Ref ApiStageName
+
+Outputs:
+  TelemetryTableName:
+    Value: !Ref TelemetryTable
+  TelemetryProcessorFunctionName:
+    Value: !Ref TelemetryProcessor
+  TelemetryApiBaseUrl:
+    Value: !Sub https://${TelemetryApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/${ApiStageName}
+  LatestTelemetryUrl:
+    Value: !Sub https://${TelemetryApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/${ApiStageName}/telemetry/latest
+  IotRuleName:
+    Value: !Ref IoTTelemetryRule

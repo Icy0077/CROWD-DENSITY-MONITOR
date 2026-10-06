@@ -1,11 +1,16 @@
 import json
-from datetime import datetime, timezone
+import os
 from decimal import Decimal
 
-from ..dynamodb.database import OccupancyStateStore
+from ..dynamodb.database import OccupancyStateStore, normalize_state
 
 
-JSON_HEADERS = {"Content-Type": "application/json"}
+JSON_HEADERS = {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,OPTIONS",
+    "Access-Control-Allow-Headers": "Accept,Content-Type,Authorization",
+}
 
 
 def _json_default(value):
@@ -15,11 +20,23 @@ def _json_default(value):
 
 
 def _get_facility_id(event):
+    if not isinstance(event, dict):
+        raise ValueError("Event must be a JSON object")
     path_parameters = event.get("pathParameters") or {}
-    facility_id = path_parameters.get("facility_id") or event.get("facility_id")
-    if not facility_id:
-        raise ValueError("facility_id is required")
-    return facility_id
+    if not isinstance(path_parameters, dict):
+        raise ValueError("pathParameters must be an object")
+    query_parameters = event.get("queryStringParameters") or {}
+    if not isinstance(query_parameters, dict):
+        raise ValueError("queryStringParameters must be an object")
+    facility_id = (
+        path_parameters.get("facility_id")
+        or query_parameters.get("facility_id")
+        or event.get("facility_id")
+        or os.getenv("DEFAULT_FACILITY_ID")
+    )
+    if not isinstance(facility_id, str) or not facility_id.strip():
+        raise ValueError("facility_id must be a non-empty string")
+    return facility_id.strip()
 
 
 def _response(status_code, payload):
@@ -38,63 +55,53 @@ def _status_for_percentage(occupancy_percentage):
     return "red"
 
 
-def _mock_telemetry(location_id):
-    return {
-        "location_id": location_id or "library_01",
-        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "occupancy": 42,
-        "capacity": 100,
-        "occupancy_percentage": 42,
-        "people_in": 8,
-        "people_out": 5,
-        "estimated_wait_minutes": 6,
-        "status": "green",
-    }
-
-
 def _telemetry_from_state(state, location_id):
-    occupancy = int(state.get("occupancy", 0))
-    capacity = int(state.get("capacity", 100))
-    occupancy_percentage = state.get(
-        "occupancy_percentage",
-        round((occupancy / capacity) * 100) if capacity else 0,
-    )
-    occupancy_percentage = int(occupancy_percentage)
+    state = normalize_state(state)
+    if state["location_id"] != location_id:
+        raise ValueError("Stored telemetry facility does not match requested facility")
 
     return {
-        "location_id": state.get("location_id", state.get("facility_id", location_id)),
-        "timestamp": state.get(
-            "timestamp",
-            datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        ),
-        "occupancy": occupancy,
-        "capacity": capacity,
-        "occupancy_percentage": occupancy_percentage,
-        "people_in": int(state.get("people_in", state.get("inflow", 0))),
-        "people_out": int(state.get("people_out", state.get("outflow", 0))),
-        "estimated_wait_minutes": int(
-            state.get("estimated_wait_minutes", state.get("wait_time", 0))
-        ),
-        "status": state.get("status", _status_for_percentage(occupancy_percentage)),
+        "location_id": state["location_id"] or location_id,
+        "timestamp": state["timestamp"],
+        "occupancy": int(state["occupancy"]),
+        "capacity": int(state["capacity"]),
+        "occupancy_percentage": int(state["occupancy_percentage"]),
+        "people_in": int(state["people_in"]),
+        "people_out": int(state["people_out"]),
+        "estimated_wait_minutes": int(state["estimated_wait_minutes"]),
+        "status": state["status"],
     }
 
 
 def get_current_facility_status(event, context=None, state_store=None):
+    if isinstance(event, dict) and (
+        event.get("httpMethod") == "OPTIONS"
+        or (event.get("requestContext") or {}).get("http", {}).get("method") == "OPTIONS"
+    ):
+        return _response(204, {})
+
     try:
         facility_id = _get_facility_id(event)
-        store = state_store or OccupancyStateStore()
+    except ValueError as error:
+        return _response(400, {"error": str(error)})
+
+    try:
+        store = state_store if state_store is not None else OccupancyStateStore()
         state = store.get_state(facility_id)
     except ValueError as error:
-        if str(error) == "DYNAMODB_TABLE is required":
-            return _response(200, _mock_telemetry(facility_id))
-        return _response(400, {"error": str(error)})
-    except TypeError as error:
-        return _response(400, {"error": str(error)})
+        if "DYNAMODB_TABLE is required" in str(error):
+            return _response(503, {"error": "Telemetry storage is not configured"})
+        return _response(503, {"error": "Telemetry storage is unavailable"})
+    except Exception:
+        return _response(503, {"error": "Telemetry storage is unavailable"})
 
     if state is None:
         return _response(404, {"error": "Facility status not found"})
 
-    return _response(200, _telemetry_from_state(state, facility_id))
+    try:
+        return _response(200, _telemetry_from_state(state, facility_id))
+    except (TypeError, ValueError, OverflowError):
+        return _response(500, {"error": "Stored telemetry is invalid"})
 
 
 def lambda_handler(event, context=None, state_store=None):

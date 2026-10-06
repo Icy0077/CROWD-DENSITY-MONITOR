@@ -1,4 +1,5 @@
 import cv2
+import numpy as np
 
 
 class PrivacyDrop:
@@ -6,4 +7,5 @@ class PrivacyDrop:
 	def drop(frame):
 		if frame is None:
 			return None
-		return cv2.GaussianBlur(frame, (35, 35), 0)
+		frame_copy = np.array(frame, copy=True, order="C")
+		return cv2.GaussianBlur(frame_copy, (35, 35), 0)

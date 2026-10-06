@@ -13,7 +13,7 @@ This document defines the shared telemetry response format for CloudCrowdAnalyti
   "occupancy_percentage": 42,
   "people_in": 8,
   "people_out": 5,
-  "estimated_wait_minutes": 6,
+  "estimated_wait_minutes": 5,
   "status": "green"
 }
 ```
@@ -39,3 +39,7 @@ This document defines the shared telemetry response format for CloudCrowdAnalyti
 - `red`: occupancy is above 80% of capacity.
 
 Status values are lowercase and should be treated as an enum. This schema documents the shared response shape only; it does not create an API or connect to a cloud service.
+
+## Reporting interval and edge input
+
+The edge input uses the transport fields `facility_id`, `timestamp`, `occupancy`, `inflow`, and `outflow`. Lambda maps these to the response fields above and obtains `capacity` from `FACILITY_CAPACITY`. `REPORTING_INTERVAL_SECONDS` defines the duration represented by each `inflow` and `outflow` count. It is configuration, not a fabricated telemetry field, and must match the edge publisher and Lambda deployment.

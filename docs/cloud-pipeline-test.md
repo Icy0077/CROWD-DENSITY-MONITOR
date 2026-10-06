@@ -52,7 +52,7 @@ Stored item and API response:
 }
 ```
 
-The handler recalculates `estimated_wait_minutes` from occupancy and arrivals, so the supplied value of `6` becomes `round(42 / 8) = 5` before storage and in the API response.
+The handler recalculates `estimated_wait_minutes` using Little's Law, `W = L / λ`. `people_in` is interpreted as arrivals during a 60-second reporting interval by default, so `λ = 8 arrivals/minute` and `W = 42 people / (8 arrivals/minute) = 5.25 minutes`, rounded to `5`. The calculation accepts an explicit `reporting_interval_seconds` argument so other reporting windows are converted into arrivals per minute before calculating wait time.
 
 Invalid payload checks returned HTTP `400` with `accepted: false` and did not create additional DynamoDB writes for:
 
