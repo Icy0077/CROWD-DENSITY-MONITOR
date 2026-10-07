@@ -324,6 +324,10 @@ img {
   border-color: rgba(177, 138, 84, 0.28);
 }
 
+.priority-card.is-estimate-unavailable {
+  border-color: rgba(109, 110, 119, 0.28);
+}
+
 .priority-value {
   display: flex;
   align-items: flex-end;
@@ -340,6 +344,12 @@ img {
   color: var(--muted);
   font-size: 15px;
   margin-bottom: 12px;
+}
+
+.queue-value-unavailable strong {
+  color: var(--muted);
+  font-size: clamp(24px, 3vw, 36px);
+  letter-spacing: -0.04em;
 }
 
 .priority-caption {

@@ -1,17 +1,23 @@
 import json
 import math
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 from numbers import Real
 
-from ..dynamodb.database import OccupancyStateStore, StaleTelemetryError
+from ..dynamodb.database import (
+	MAX_ARRIVAL_HISTORY_SAMPLES,
+	OccupancyStateStore,
+	StaleTelemetryError,
+)
 
 
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 MAX_FACILITY_ID_LENGTH = 128
 MAX_WAIT_MINUTES = 24 * 60
+ARRIVAL_OBSERVATION_WINDOW_SECONDS = 60
+MAX_STATE_UPDATE_ATTEMPTS = 5
 REQUIRED_FIELDS = (
 	"location_id",
 	"timestamp",
@@ -64,7 +70,7 @@ def _normalize_telemetry(telemetry):
 
 	normalized = dict(telemetry)
 	edge_fields = {"facility_id", "timestamp", "occupancy", "inflow", "outflow"}
-	if set(normalized) in (edge_fields, edge_fields | {"reporting_interval_seconds"}):
+	if set(normalized) == edge_fields:
 		try:
 			capacity = int(os.environ["FACILITY_CAPACITY"])
 		except (KeyError, TypeError, ValueError) as error:
@@ -94,7 +100,6 @@ def _normalize_telemetry(telemetry):
 			normalized[field] = normalized[legacy_field]
 
 	allowed_fields = set(REQUIRED_FIELDS) | set(legacy_fields.values())
-	allowed_fields.add("reporting_interval_seconds")
 	unexpected = sorted(set(normalized) - allowed_fields)
 	if unexpected:
 		raise ValueError(f"Unexpected telemetry fields: {', '.join(unexpected)}")
@@ -107,13 +112,19 @@ def _normalize_telemetry(telemetry):
 		"capacity",
 		"people_in",
 		"people_out",
-		"estimated_wait_minutes",
 	)
 	if any(
 		isinstance(normalized[field], bool) or not isinstance(normalized[field], int)
 		for field in integer_fields
 	):
 		raise ValueError(f"{', '.join(integer_fields)} must be integers")
+	wait_minutes = normalized["estimated_wait_minutes"]
+	if (
+		isinstance(wait_minutes, bool)
+		or not isinstance(wait_minutes, Real)
+		or not math.isfinite(float(wait_minutes))
+	):
+		raise ValueError("estimated_wait_minutes must be a finite number")
 	if any(normalized[field] < 0 for field in ("occupancy", "people_in", "people_out", "estimated_wait_minutes")):
 		raise ValueError("occupancy, people_in, people_out, and estimated_wait_minutes cannot be negative")
 	if normalized["capacity"] <= 0:
@@ -135,17 +146,7 @@ def _normalize_telemetry(telemetry):
 		raise ValueError("status must be green, yellow, or red")
 	if normalized["status"] != _status_for_percentage(computed_percentage):
 		raise ValueError("status does not match occupancy_percentage")
-	if "reporting_interval_seconds" in normalized:
-		interval = normalized["reporting_interval_seconds"]
-		if (
-			isinstance(interval, bool)
-			or not isinstance(interval, Real)
-			or not math.isfinite(float(interval))
-			or interval <= 0
-		):
-			raise ValueError("reporting_interval_seconds must be a positive finite number")
-
-	result = {
+	return {
 		"location_id": normalized["location_id"],
 		"timestamp": _normalize_timestamp(normalized["timestamp"]),
 		"occupancy": normalized["occupancy"],
@@ -156,9 +157,6 @@ def _normalize_telemetry(telemetry):
 		"estimated_wait_minutes": normalized["estimated_wait_minutes"],
 		"status": normalized["status"],
 	}
-	if "reporting_interval_seconds" in normalized:
-		result["reporting_interval_seconds"] = normalized["reporting_interval_seconds"]
-	return result
 
 
 def parse_event(event):
@@ -212,7 +210,46 @@ def calculate_wait_time(occupancy, people_in, reporting_interval_seconds=60):
 	if people_in == 0:
 		return 0
 	arrival_rate_per_minute = people_in / (reporting_interval_seconds / 60)
-	return min(MAX_WAIT_MINUTES, max(0, round(occupancy / arrival_rate_per_minute)))
+	return min(MAX_WAIT_MINUTES, max(0.0, occupancy / arrival_rate_per_minute))
+
+
+def _update_arrival_history(history, timestamp, people_in, reporting_interval_seconds):
+	current_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+	window_start = current_time - timedelta(seconds=ARRIVAL_OBSERVATION_WINDOW_SECONDS)
+	observations = [
+		{
+			"timestamp": datetime.fromisoformat(sample["timestamp"].replace("Z", "+00:00")),
+			"people_in": sample["people_in"],
+		}
+		for sample in history
+	]
+	observations.append({"timestamp": current_time, "people_in": people_in})
+
+	prior_observations = [sample for sample in observations if sample["timestamp"] <= window_start]
+	window_observations = [sample for sample in observations if sample["timestamp"] > window_start]
+	baseline = max(prior_observations, key=lambda sample: sample["timestamp"]) if prior_observations else None
+	retained = ([baseline] if baseline else []) + window_observations
+	if len(retained) > MAX_ARRIVAL_HISTORY_SAMPLES:
+		raise ValueError("Arrival history exceeds the supported reporting frequency")
+
+	has_full_window = baseline is not None
+	checkpoints = ([baseline] if baseline else []) + window_observations
+	max_gap = max(reporting_interval_seconds * 2, reporting_interval_seconds + 5)
+	if any(
+		(checkpoints[index + 1]["timestamp"] - checkpoints[index]["timestamp"]).total_seconds() > max_gap
+		for index in range(len(checkpoints) - 1)
+	):
+		has_full_window = False
+
+	persisted_history = [
+		{
+			"timestamp": sample["timestamp"].astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+			"people_in": sample["people_in"],
+		}
+		for sample in retained
+	]
+	arrivals_in_window = sum(sample["people_in"] for sample in window_observations)
+	return persisted_history, arrivals_in_window, has_full_window
 
 
 def _configured_reporting_interval():
@@ -228,18 +265,41 @@ def _configured_reporting_interval():
 
 def process_telemetry(telemetry, state_store, reporting_interval_seconds=None):
 	processed = validate_telemetry(telemetry)
-	message_interval = processed.pop("reporting_interval_seconds", None)
-	if message_interval is not None:
-		reporting_interval_seconds = message_interval
-	elif reporting_interval_seconds is None:
+	if reporting_interval_seconds is None:
 		reporting_interval_seconds = _configured_reporting_interval()
-	processed["estimated_wait_minutes"] = calculate_wait_time(
-		processed["occupancy"],
-		processed["people_in"],
-		reporting_interval_seconds=reporting_interval_seconds,
-	)
 	processed["status"] = _status_for_percentage(processed["occupancy_percentage"])
-	state_store.save_state(processed)
+	for attempt in range(MAX_STATE_UPDATE_ATTEMPTS):
+		previous_timestamp, history = state_store.get_arrival_history(processed["location_id"])
+		if previous_timestamp is not None and (
+			datetime.fromisoformat(processed["timestamp"].replace("Z", "+00:00"))
+			<= datetime.fromisoformat(previous_timestamp.replace("Z", "+00:00"))
+		):
+			raise StaleTelemetryError("telemetry timestamp is not newer than stored state")
+		history, arrivals_in_window, has_full_window = _update_arrival_history(
+			history,
+			processed["timestamp"],
+			processed["people_in"],
+			reporting_interval_seconds,
+		)
+		processed["estimated_wait_minutes"] = (
+			calculate_wait_time(
+				processed["occupancy"],
+				arrivals_in_window,
+				reporting_interval_seconds=ARRIVAL_OBSERVATION_WINDOW_SECONDS,
+			)
+			if has_full_window
+			else 0
+		)
+		try:
+			state_store.save_state(
+				processed,
+				arrival_history=history,
+				expected_timestamp=previous_timestamp,
+			)
+			break
+		except StaleTelemetryError:
+			if attempt == MAX_STATE_UPDATE_ATTEMPTS - 1:
+				raise RuntimeError("Unable to update rolling arrival history after concurrent writes")
 	LOGGER.info(
 		"Processed telemetry location_id=%s timestamp=%s",
 		processed["location_id"],

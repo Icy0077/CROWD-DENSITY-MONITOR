@@ -20,6 +20,12 @@ const TELEMETRY_VALUE_FIELDS = ['facility_id', 'timestamp', 'occupancy', 'capaci
 const initialState = { facilityId: '', occupancy: null, capacity: null, utilization: null, estimatedWaitTime: null, inflow: null, outflow: null, status: null, lastUpdated: null, chartPoints: [], chartLabels: [], telemetry: [], activityLog: [] }
 
 function formatTime(date) { return !date || Number.isNaN(date.getTime()) ? '—' : date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase() }
+function formatEstimatedQueueTime(value) {
+  if (!Number.isFinite(value) || value <= 0) return { value: 'Unavailable', unit: '', unavailable: true }
+  if (value < 1) return { value: '< 1', unit: 'min', unavailable: false }
+  if (value < 10) return { value: new Intl.NumberFormat('en', { maximumFractionDigits: 1 }).format(value), unit: 'min', unavailable: false }
+  return { value: String(Math.round(value)), unit: 'min', unavailable: false }
+}
 function telemetryChanged(previous, next) { return !previous || TELEMETRY_VALUE_FIELDS.some((field) => previous[field] !== next[field]) }
 function getTelemetryStatus(lastTelemetryAt, apiError, now) {
   if (apiError) return 'disconnected'
@@ -75,11 +81,12 @@ function PriorityReadings({ data, telemetryStatus }) {
   const utilization = Number.isFinite(data.utilization) ? Math.max(0, Math.min(100, data.utilization)) : null
   const status = data.status || 'unknown'
   const waitTime = Number.isFinite(data.estimatedWaitTime) ? data.estimatedWaitTime : null
+  const queueTime = formatEstimatedQueueTime(waitTime)
   const statusLabel = { green: 'Normal', yellow: 'Moderate', red: 'High', unknown: 'Status unavailable' }[status]
   const isStale = telemetryStatus === 'stale' || telemetryStatus === 'disconnected'
 
-  const queueCue = waitTime === null
-    ? isStale ? 'Last-known estimate only' : 'Waiting for a live estimate'
+  const queueCue = queueTime.unavailable
+    ? 'No valid proxy estimate available'
     : waitTime <= 3
       ? 'Minimal delay expected'
       : waitTime <= 10
@@ -105,14 +112,14 @@ function PriorityReadings({ data, telemetryStatus }) {
       </div>
     </article>
 
-    <article className={`priority-card queue-priority ${isStale ? 'is-stale' : ''}`} aria-labelledby="queue-title">
-      <p className="eyebrow" id="queue-title">Queue time</p>
-      <div className="priority-value queue-priority-value" aria-label={`${waitTime === null ? 'unknown' : waitTime} minutes estimated wait`}>
-        <strong>{waitTime === null ? '—' : waitTime}</strong><span> min</span>
+    <article className={`priority-card queue-priority ${isStale ? 'is-stale' : ''} ${queueTime.unavailable ? 'is-estimate-unavailable' : ''}`} aria-labelledby="queue-title">
+      <p className="eyebrow" id="queue-title">Estimated Queue Time (Proxy)</p>
+      <div className={`priority-value queue-priority-value ${queueTime.unavailable ? 'queue-value-unavailable' : ''}`} aria-label={queueTime.unavailable ? 'Estimated queue time proxy unavailable' : `${queueTime.value} minutes estimated queue time proxy`}>
+        <strong>{queueTime.value}</strong>{queueTime.unit && <span> {queueTime.unit}</span>}
       </div>
       <p className="priority-caption">{queueCue}</p>
       <div className="priority-foot">
-        <span className={`status-note status-note-${status}`}><i />{statusLabel}</span>
+        <span className={`status-note status-note-${queueTime.unavailable ? 'unknown' : status}`}><i />{queueTime.unavailable ? 'Unavailable' : statusLabel}</span>
         <span>{isStale ? 'Last-known estimate' : 'Live estimate'}</span>
       </div>
     </article>

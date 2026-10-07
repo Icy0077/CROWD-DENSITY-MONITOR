@@ -1,6 +1,7 @@
 import json
 import logging
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from importlib import import_module
 
 import pytest
@@ -40,9 +41,25 @@ class MemoryTable:
 		self.items = {}
 		self.put_calls = 0
 
-	def put_item(self, Item, **_kwargs):
+	def put_item(self, Item, **kwargs):
 		existing = self.items.get(Item["location_id"])
-		if existing and existing["timestamp"] > Item["timestamp"]:
+		expression_values = kwargs.get("ExpressionAttributeValues", {})
+		expected_timestamp = expression_values.get(":expected_timestamp")
+		if expected_timestamp is not None and (
+			existing is None
+			or existing["timestamp"] != expected_timestamp
+			or existing["timestamp"] >= Item["timestamp"]
+		):
+			raise ClientError(
+				{"Error": {"Code": "ConditionalCheckFailedException", "Message": "concurrent write"}},
+				"PutItem",
+			)
+		if kwargs.get("ConditionExpression") == "attribute_not_exists(#location_id)" and existing is not None:
+			raise ClientError(
+				{"Error": {"Code": "ConditionalCheckFailedException", "Message": "already exists"}},
+				"PutItem",
+			)
+		if expected_timestamp is None and existing and existing["timestamp"] > Item["timestamp"]:
 			raise ClientError(
 				{"Error": {"Code": "ConditionalCheckFailedException", "Message": "stale"}},
 				"PutItem",
@@ -73,6 +90,23 @@ def make_store():
 	return store, resource.tables["telemetry"]
 
 
+def submit_reading(store, seconds, people_in, occupancy=42):
+	timestamp = (
+		datetime(2026, 9, 17, 10, 30, tzinfo=timezone.utc) + timedelta(seconds=seconds)
+	).isoformat().replace("+00:00", "Z")
+	telemetry = {
+		**VALID_TELEMETRY,
+		"timestamp": timestamp,
+		"occupancy": occupancy,
+		"occupancy_percentage": occupancy,
+		"people_in": people_in,
+		"status": "green",
+	}
+	response = lambda_handler(telemetry, state_store=store)
+	assert response["statusCode"] == 200
+	return json.loads(response["body"])["telemetry"]["estimated_wait_minutes"]
+
+
 def test_valid_mqtt_telemetry_is_validated_and_processed():
 	store, _ = make_store()
 	message = json.dumps(VALID_TELEMETRY)
@@ -82,7 +116,7 @@ def test_valid_mqtt_telemetry_is_validated_and_processed():
 	assert response["statusCode"] == 200
 	result = json.loads(response["body"])
 	assert result["accepted"] is True
-	assert result["telemetry"]["estimated_wait_minutes"] == 5
+	assert result["telemetry"]["estimated_wait_minutes"] == 0
 	assert validate_telemetry(VALID_TELEMETRY)["location_id"] == "library_01"
 
 
@@ -117,27 +151,7 @@ def test_edge_telemetry_is_normalized_using_deployment_configuration(monkeypatch
 	assert payload["people_in"] == 8
 	assert payload["people_out"] == 5
 	assert payload["capacity"] == 100
-	assert payload["estimated_wait_minutes"] == 10
-
-
-def test_edge_telemetry_uses_its_measured_reporting_interval(monkeypatch):
-	monkeypatch.setenv("FACILITY_CAPACITY", "100")
-	monkeypatch.setenv("REPORTING_INTERVAL_SECONDS", "60")
-	store, _ = make_store()
-	edge_message = {
-		"facility_id": "library_01",
-		"timestamp": "2026-09-17T10:30:00Z",
-		"occupancy": 42,
-		"inflow": 8,
-		"outflow": 5,
-		"reporting_interval_seconds": 120,
-	}
-
-	response = lambda_handler(edge_message, state_store=store)
-
-	assert response["statusCode"] == 200
-	payload = json.loads(response["body"])["telemetry"]
-	assert payload["estimated_wait_minutes"] == 10
+	assert payload["estimated_wait_minutes"] == 0
 
 
 def test_edge_telemetry_requires_configured_facility_capacity(monkeypatch):
@@ -161,7 +175,6 @@ def test_edge_telemetry_requires_configured_facility_capacity(monkeypatch):
 		("occupancy", -1),
 		("occupancy_over_capacity", 101),
 		("people_in", 1.5),
-		("reporting_interval_seconds", 0),
 		("timestamp", "not-a-timestamp"),
 		("status", "purple"),
 		("occupancy_percentage", 99),
@@ -188,14 +201,104 @@ def test_invalid_telemetry_is_rejected_without_state_write(field, value):
 
 
 def test_wait_time_uses_littles_law_with_explicit_interval_units():
-	assert calculate_wait_time(42, 8, reporting_interval_seconds=60) == 5
-	assert calculate_wait_time(42, 8, reporting_interval_seconds=120) == 10
+	assert calculate_wait_time(42, 8, reporting_interval_seconds=60) == 5.25
+	assert calculate_wait_time(42, 8, reporting_interval_seconds=120) == 10.5
 	assert calculate_wait_time(42, 0, reporting_interval_seconds=60) == 0
 	with pytest.raises(ValueError):
 		calculate_wait_time(-1, 8)
 	with pytest.raises(ValueError):
 		calculate_wait_time(42, 8, reporting_interval_seconds=0)
 	assert calculate_wait_time(100000, 1, reporting_interval_seconds=1) == 24 * 60
+
+
+@pytest.mark.parametrize(
+	("occupancy", "arrivals", "expected"),
+	[(2, 5, 0.4), (4, 5, 0.8), (7, 5, 1.4), (28, 5, 5.6)],
+)
+def test_fractional_wait_precision_survives_calculation_storage_and_api(occupancy, arrivals, expected):
+	store, table = make_store()
+	submit_reading(store, 0, people_in=0, occupancy=occupancy)
+	response = lambda_handler(
+		{
+			**VALID_TELEMETRY,
+			"timestamp": "2026-09-17T10:31:00Z",
+			"occupancy": occupancy,
+			"occupancy_percentage": occupancy,
+			"people_in": arrivals,
+			"status": "green",
+		},
+		state_store=store,
+	)
+
+	assert response["statusCode"] == 200
+	processed = json.loads(response["body"])["telemetry"]
+	assert processed["estimated_wait_minutes"] == pytest.approx(expected)
+	assert float(table.items["library_01"]["estimated_wait_minutes"]) == pytest.approx(expected)
+
+	api_response = get_current_facility_status(
+		{"queryStringParameters": {"facility_id": "library_01"}},
+		state_store=store,
+	)
+	api_value = json.loads(api_response["body"])["estimated_wait_minutes"]
+	assert isinstance(api_value, (int, float))
+	assert api_value == pytest.approx(expected)
+
+
+def test_rolling_wait_estimate_uses_arrivals_from_the_full_sixty_second_window():
+	store, _ = make_store()
+	estimate = 0
+	for seconds in range(0, 61, 5):
+		estimate = submit_reading(store, seconds, people_in=1 if seconds == 5 else 0)
+
+	assert estimate == 42
+
+
+def test_rolling_wait_estimate_handles_one_arrival_over_sixty_seconds():
+	store, _ = make_store()
+	submit_reading(store, 0, people_in=0)
+
+	assert submit_reading(store, 60, people_in=1) == 42
+
+
+def test_rolling_wait_estimate_sums_multiple_arrivals_in_sixty_seconds():
+	store, _ = make_store()
+	submit_reading(store, 0, people_in=0)
+	submit_reading(store, 20, people_in=2)
+	submit_reading(store, 40, people_in=3)
+
+	assert submit_reading(store, 60, people_in=1) == 7
+
+
+def test_rolling_wait_estimate_is_zero_when_full_window_has_no_arrivals():
+	store, _ = make_store()
+	for seconds in range(0, 61, 5):
+		estimate = submit_reading(store, seconds, people_in=0)
+
+	assert estimate == 0
+
+
+def test_rolling_wait_estimate_is_zero_when_occupancy_is_zero():
+	store, _ = make_store()
+	submit_reading(store, 0, people_in=0, occupancy=0)
+	submit_reading(store, 30, people_in=3, occupancy=0)
+
+	assert submit_reading(store, 60, people_in=3, occupancy=0) == 0
+
+
+def test_rolling_wait_estimate_is_zero_until_history_covers_the_window():
+	store, _ = make_store()
+	submit_reading(store, 5, people_in=1)
+
+	assert submit_reading(store, 10, people_in=0) == 0
+
+
+def test_rolling_wait_estimate_expires_arrivals_outside_the_window():
+	store, _ = make_store()
+	submit_reading(store, 0, people_in=0)
+	submit_reading(store, 5, people_in=5)
+	assert submit_reading(store, 60, people_in=0) == pytest.approx(8.4)
+
+	assert submit_reading(store, 65, people_in=0) == 0
 
 
 def test_invalid_reporting_interval_configuration_is_rejected(monkeypatch):
@@ -243,7 +346,7 @@ def test_api_response_matches_frontend_telemetry_contract():
 	assert api_response["statusCode"] == 200
 	payload = json.loads(api_response["body"])
 	assert set(payload) == set(VALID_TELEMETRY)
-	assert payload["estimated_wait_minutes"] == 5
+	assert payload["estimated_wait_minutes"] == 0
 	assert payload["occupancy"] == 42
 
 

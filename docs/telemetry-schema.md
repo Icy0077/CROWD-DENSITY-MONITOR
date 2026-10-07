@@ -29,7 +29,7 @@ This document defines the shared telemetry response format for CloudCrowdAnalyti
 | `occupancy_percentage` | number | Current occupancy as a percentage of capacity, normally calculated as `occupancy / capacity * 100`. |
 | `people_in` | integer | Number of people entering during the reporting interval. Must be zero or greater. |
 | `people_out` | integer | Number of people leaving during the reporting interval. Must be zero or greater. |
-| `estimated_wait_minutes` | integer | Estimated wait time in minutes. Must be zero or greater. |
+| `estimated_wait_minutes` | number | Estimated wait proxy in minutes. May be fractional and must be zero or greater. |
 | `status` | string | Current crowding status. Allowed values are `green`, `yellow`, and `red`. |
 
 ## Status values
@@ -42,4 +42,4 @@ Status values are lowercase and should be treated as an enum. This schema docume
 
 ## Reporting interval and edge input
 
-The edge input uses the transport fields `facility_id`, `timestamp`, `occupancy`, `inflow`, and `outflow`. Lambda maps these to the response fields above and obtains `capacity` from `FACILITY_CAPACITY`. The edge MQTT message also includes `reporting_interval_seconds`, the measured duration represented by each `inflow` and `outflow` count. This is transport metadata, not part of the API response; `REPORTING_INTERVAL_SECONDS` remains a fallback for older messages without it.
+The edge input uses the transport fields `facility_id`, `timestamp`, `occupancy`, `inflow`, and `outflow`. Lambda maps these to the response fields above and obtains `capacity` from `FACILITY_CAPACITY`. `REPORTING_INTERVAL_SECONDS` defines the duration represented by each `inflow` and `outflow` count. The wait-time proxy uses arrival counts persisted in the existing latest-state item to build a rolling 60-second rate; the internal history is not included in the API response. Startup or gaps in history leave the estimate at zero until a complete observation window is available.

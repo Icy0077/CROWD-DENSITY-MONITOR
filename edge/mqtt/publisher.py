@@ -1,8 +1,6 @@
 from datetime import datetime, timezone
 import json
-import math
 import os
-from numbers import Real
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
@@ -31,14 +29,7 @@ def _normalize_timestamp(value=None):
 	raise ValueError("timestamp must be a datetime or ISO 8601 string")
 
 
-def build_telemetry(
-	facility_id,
-	occupancy,
-	inflow,
-	outflow,
-	timestamp=None,
-	reporting_interval_seconds=None,
-):
+def build_telemetry(facility_id, occupancy, inflow, outflow, timestamp=None):
 	if not isinstance(facility_id, str) or not facility_id.strip():
 		raise ValueError("facility_id must be a non-empty string")
 	counts = {"occupancy": occupancy, "inflow": inflow, "outflow": outflow}
@@ -46,24 +37,13 @@ def build_telemetry(
 		raise ValueError("occupancy, inflow, and outflow must be integers")
 	if any(value < 0 for value in counts.values()):
 		raise ValueError("occupancy, inflow, and outflow cannot be negative")
-	if reporting_interval_seconds is not None and (
-		isinstance(reporting_interval_seconds, bool)
-		or not isinstance(reporting_interval_seconds, Real)
-		or not math.isfinite(float(reporting_interval_seconds))
-		or reporting_interval_seconds <= 0
-	):
-		raise ValueError("reporting_interval_seconds must be a positive finite number")
-
-	telemetry = {
+	return {
 		"facility_id": facility_id,
 		"timestamp": _normalize_timestamp(timestamp),
 		"occupancy": occupancy,
 		"inflow": inflow,
 		"outflow": outflow,
 	}
-	if reporting_interval_seconds is not None:
-		telemetry["reporting_interval_seconds"] = reporting_interval_seconds
-	return telemetry
 
 
 class MqttPublisher:

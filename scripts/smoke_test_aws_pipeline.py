@@ -37,10 +37,8 @@ def _status_for_percentage(value):
     return "red"
 
 
-def _expected_state(message, capacity, interval_seconds):
+def _expected_state(message, capacity):
     percentage = round(message["occupancy"] / capacity * 100)
-    arrivals_per_minute = message["inflow"] / (interval_seconds / 60)
-    wait_minutes = round(message["occupancy"] / arrivals_per_minute) if arrivals_per_minute else 0
     return {
         "location_id": message["facility_id"],
         "timestamp": message["timestamp"],
@@ -49,7 +47,7 @@ def _expected_state(message, capacity, interval_seconds):
         "occupancy_percentage": percentage,
         "people_in": message["inflow"],
         "people_out": message["outflow"],
-        "estimated_wait_minutes": wait_minutes,
+        "estimated_wait_minutes": 0,
         "status": _status_for_percentage(percentage),
     }
 
@@ -77,6 +75,23 @@ def _wait_for_lambda_log(logs, log_group, marker, start_time_ms, deadline):
     return False
 
 
+def _wait_for_api_state(api_url, expected, deadline):
+    while time.monotonic() < deadline:
+        try:
+            with urlopen(api_url, timeout=min(5, max(1, deadline - time.monotonic()))) as response:
+                api_state = json.loads(response.read().decode("utf-8"))
+        except HTTPError as error:
+            if error.code != 404:
+                raise RuntimeError(f"API request failed: {error}") from error
+        except URLError as error:
+            raise RuntimeError(f"API request failed: {error}") from error
+        else:
+            if api_state == expected:
+                return True
+        time.sleep(min(1, max(0, deadline - time.monotonic())))
+    return False
+
+
 def run(timeout):
     if timeout <= 0:
         raise ValueError("timeout must be greater than zero")
@@ -85,7 +100,6 @@ def run(timeout):
     table_name = os.environ.get("DYNAMODB_TABLE")
     processor_name = os.environ.get("IOT_PROCESSOR_FUNCTION_NAME")
     capacity_value = os.environ.get("FACILITY_CAPACITY")
-	interval_seconds = int(os.environ.get("REPORTING_INTERVAL_SECONDS", "5"))
     missing = [
         name
         for name, value in {
@@ -99,8 +113,8 @@ def run(timeout):
     if missing:
         raise ValueError("Missing required smoke-test environment variables: " + ", ".join(missing))
     capacity = int(capacity_value)
-    if capacity <= 0 or interval_seconds <= 0:
-        raise ValueError("FACILITY_CAPACITY and REPORTING_INTERVAL_SECONDS must be greater than zero")
+    if capacity <= 0:
+        raise ValueError("FACILITY_CAPACITY must be greater than zero")
 
     facility_id = f"aws-smoke-{uuid.uuid4().hex}"
     message = build_telemetry(
@@ -109,7 +123,7 @@ def run(timeout):
         inflow=3,
         outflow=1,
     )
-    expected = _expected_state(message, capacity, interval_seconds)
+    expected = _expected_state(message, capacity)
     publisher = MqttPublisher()
     received = threading.Event()
     connected = threading.Event()
@@ -183,13 +197,8 @@ def run(timeout):
     print("DYNAMODB_UPDATE: PASS")
 
     api_url = f"{api_base_url.rstrip('/')}/telemetry/latest?{urlencode({'facility_id': facility_id})}"
-    try:
-        with urlopen(api_url, timeout=max(1, deadline - time.monotonic())) as response:
-            api_state = json.loads(response.read().decode("utf-8"))
-    except (HTTPError, URLError, TimeoutError) as error:
-        raise RuntimeError(f"API request failed: {error}") from error
-    if api_state != expected:
-        raise RuntimeError("API response did not match the telemetry state saved in DynamoDB")
+    if not _wait_for_api_state(api_url, expected, deadline):
+        raise TimeoutError("API response did not match the telemetry state saved in DynamoDB before timeout")
     print("API_STATE_MATCH: PASS")
 
 

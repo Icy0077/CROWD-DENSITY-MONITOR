@@ -68,7 +68,7 @@ def _telemetry_from_state(state, location_id):
         "occupancy_percentage": int(state["occupancy_percentage"]),
         "people_in": int(state["people_in"]),
         "people_out": int(state["people_out"]),
-        "estimated_wait_minutes": int(state["estimated_wait_minutes"]),
+        "estimated_wait_minutes": state["estimated_wait_minutes"],
         "status": state["status"],
     }
 

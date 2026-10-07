@@ -30,27 +30,20 @@ class _TelemetryIntervalPublisher:
 		self.pending_out += sum(detection["crossing"] == "OUT" for detection in detections)
 		self.has_frames = True
 		now = time.monotonic()
-		elapsed = now - self.interval_start
-		if elapsed >= self.reporting_interval_seconds:
-			self._publish_pending(elapsed)
+		if now - self.interval_start >= self.reporting_interval_seconds:
+			self._publish_pending()
 			self.interval_start = now
 
 	def flush(self):
 		if self.has_frames:
-			self._publish_pending(time.monotonic() - self.interval_start)
+			self._publish_pending()
 
-	def _publish_pending(self, elapsed_seconds):
-		interval_metadata = (
-			{"reporting_interval_seconds": elapsed_seconds}
-			if elapsed_seconds > 0
-			else {}
-		)
+	def _publish_pending(self):
 		telemetry = build_telemetry(
 			self.facility_id,
 			self.detector.occupancy,
 			self.pending_in,
 			self.pending_out,
-			**interval_metadata,
 		)
 		try:
 			self.publisher.publish(telemetry)

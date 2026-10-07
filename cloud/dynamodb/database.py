@@ -19,6 +19,8 @@ STATE_FIELDS = (
 	"estimated_wait_minutes",
 	"status",
 )
+ARRIVAL_HISTORY_FIELD = "arrival_history"
+MAX_ARRIVAL_HISTORY_SAMPLES = 120
 MAX_FACILITY_ID_LENGTH = 128
 
 
@@ -89,7 +91,7 @@ def normalize_state(state):
 		raise ValueError(f"Missing state fields: {', '.join(missing)}")
 	state["location_id"] = _validate_facility_id(state["location_id"])
 	state["timestamp"] = _normalize_timestamp(state["timestamp"])
-	integer_fields = ("occupancy", "capacity", "people_in", "people_out", "estimated_wait_minutes")
+	integer_fields = ("occupancy", "capacity", "people_in", "people_out")
 	for field in integer_fields:
 		value = state[field]
 		if isinstance(value, bool) or not isinstance(value, (Real, Decimal)):
@@ -102,7 +104,15 @@ def normalize_state(state):
 		if not finite_value or integer_value != value:
 			raise ValueError(f"{field} must be a finite integer")
 		state[field] = integer_value
-	if any(state[field] < 0 for field in ("occupancy", "people_in", "people_out", "estimated_wait_minutes")):
+	wait_minutes = state["estimated_wait_minutes"]
+	if (
+		isinstance(wait_minutes, bool)
+		or not isinstance(wait_minutes, (Real, Decimal))
+		or not math.isfinite(float(wait_minutes))
+		or wait_minutes < 0
+	):
+		raise ValueError("estimated_wait_minutes must be a finite non-negative number")
+	if any(state[field] < 0 for field in ("occupancy", "people_in", "people_out")):
 		raise ValueError("occupancy and counts cannot be negative")
 	if state["capacity"] <= 0:
 		raise ValueError("capacity must be greater than zero")
@@ -137,28 +147,87 @@ class OccupancyStateStore:
 		)
 		self.table = resource.Table(self.table_name)
 
-	def save_state(self, state):
+	def save_state(self, state, arrival_history=None, expected_timestamp=None):
 		normalized = normalize_state(state)
 		item = {
 			field: normalized[field]
 			for field in STATE_FIELDS
 			if field in normalized
 		}
+		if arrival_history is not None:
+			item[ARRIVAL_HISTORY_FIELD] = _normalize_arrival_history(arrival_history)
 		try:
-			self.table.put_item(
-				Item=_to_dynamodb_value(item),
-				ConditionExpression="attribute_not_exists(#location_id) OR #timestamp <= :timestamp",
-				ExpressionAttributeNames={"#location_id": "location_id", "#timestamp": "timestamp"},
-				ExpressionAttributeValues={":timestamp": item["timestamp"]},
-			)
+			if arrival_history is None:
+				self.table.put_item(
+					Item=_to_dynamodb_value(item),
+					ConditionExpression="attribute_not_exists(#location_id) OR #timestamp <= :timestamp",
+					ExpressionAttributeNames={"#location_id": "location_id", "#timestamp": "timestamp"},
+					ExpressionAttributeValues={":timestamp": item["timestamp"]},
+				)
+			elif expected_timestamp is None:
+				self.table.put_item(
+					Item=_to_dynamodb_value(item),
+					ConditionExpression="attribute_not_exists(#location_id)",
+					ExpressionAttributeNames={"#location_id": "location_id"},
+				)
+			else:
+				self.table.put_item(
+					Item=_to_dynamodb_value(item),
+					ConditionExpression="#timestamp = :expected_timestamp",
+					ExpressionAttributeNames={"#timestamp": "timestamp"},
+					ExpressionAttributeValues={
+						":expected_timestamp": expected_timestamp,
+					},
+				)
 		except ClientError as error:
 			if error.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
 				raise StaleTelemetryError("telemetry timestamp is older than stored state") from error
 			raise
 		return item
 
+	def get_arrival_history(self, facility_id):
+		facility_id = _validate_facility_id(facility_id)
+		response = self.table.get_item(Key={"location_id": facility_id}, ConsistentRead=True)
+		item = response.get("Item")
+		if item is None:
+			return None, []
+		return (
+			_normalize_timestamp(item["timestamp"]),
+			_normalize_arrival_history(item.get(ARRIVAL_HISTORY_FIELD, [])),
+		)
+
 	def get_state(self, facility_id):
 		facility_id = _validate_facility_id(facility_id)
 		response = self.table.get_item(Key={"location_id": facility_id}, ConsistentRead=True)
 		item = response.get("Item")
 		return normalize_state(item)
+
+
+def _normalize_arrival_history(history):
+	if not isinstance(history, list) or len(history) > MAX_ARRIVAL_HISTORY_SAMPLES:
+		raise ValueError("arrival_history must be a bounded list")
+	normalized = []
+	for sample in history:
+		if not isinstance(sample, dict) or set(sample) != {"timestamp", "people_in"}:
+			raise ValueError("arrival_history contains an invalid sample")
+		people_in = sample["people_in"]
+		if isinstance(people_in, bool) or not isinstance(people_in, (Real, Decimal)):
+			raise ValueError("arrival_history people_in must be a non-negative integer")
+		try:
+			integer_value = int(people_in)
+			finite_value = math.isfinite(float(people_in))
+		except (OverflowError, ValueError):
+			raise ValueError("arrival_history people_in must be a non-negative integer") from None
+		if not finite_value or integer_value != people_in or integer_value < 0:
+			raise ValueError("arrival_history people_in must be a non-negative integer")
+		normalized.append({
+			"timestamp": _normalize_timestamp(sample["timestamp"]),
+			"people_in": integer_value,
+		})
+	parsed_timestamps = [
+		datetime.fromisoformat(sample["timestamp"].replace("Z", "+00:00"))
+		for sample in normalized
+	]
+	if any(parsed_timestamps[index] >= parsed_timestamps[index + 1] for index in range(len(parsed_timestamps) - 1)):
+		raise ValueError("arrival_history timestamps must be strictly increasing")
+	return normalized
