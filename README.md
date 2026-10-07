@@ -2,518 +2,347 @@
 
 # CloudCrowd Analytics
 
-### Privacy-aware, edge-first crowd density monitoring with real-time cloud telemetry.
+### Edge-first crowd counting and occupancy monitoring
 
-*See the room. Understand the flow. Keep the video at the edge.*
+Detect people and movement locally, send aggregate telemetry to the cloud, and review facility status in a React dashboard.
 
-[![View on GitHub](https://img.shields.io/badge/View_on_GitHub-CROWD--DENSITY--MONITOR-29322f?style=for-the-badge&logo=github)](https://github.com/Icy0077/CROWD-DENSITY-MONITOR)
+[![Python](https://img.shields.io/badge/Python-edge%20%2B%20cloud-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![OpenCV](https://img.shields.io/badge/OpenCV-video%20input-5C3EE8?logo=opencv&logoColor=white)](https://opencv.org/)
+[![Ultralytics](https://img.shields.io/badge/Ultralytics-YOLO%20%2B%20ByteTrack-00A3A3)](https://docs.ultralytics.com/)
+[![React](https://img.shields.io/badge/React-dashboard-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![Vite](https://img.shields.io/badge/Vite-build-646CFF?logo=vite&logoColor=white)](https://vite.dev/)
+[![AWS](https://img.shields.io/badge/AWS-IoT%20%7C%20Lambda%20%7C%20DynamoDB-FF9900?logo=amazonaws&logoColor=white)](https://aws.amazon.com/)
 
-![Python](https://img.shields.io/badge/Python-edge_%2B_cloud-3776AB?logo=python&logoColor=white)
-![OpenCV](https://img.shields.io/badge/OpenCV-vision-5C3EE8?logo=opencv&logoColor=white)
-![PyTorch](https://img.shields.io/badge/PyTorch-inference-EE4C2C?logo=pytorch&logoColor=white)
-![YOLO](https://img.shields.io/badge/Ultralytics-YOLOv8n-00A3A3)
-![React](https://img.shields.io/badge/React-dashboard-61DAFB?logo=react&logoColor=black)
-![Vite](https://img.shields.io/badge/Vite-build-646CFF?logo=vite&logoColor=white)
-![AWS](https://img.shields.io/badge/AWS-IoT_%7C_Lambda_%7C_DynamoDB-FF9900?logo=amazonaws&logoColor=white)
-![MQTT](https://img.shields.io/badge/MQTT-TLS-660066?logo=mqtt&logoColor=white)
-
-[![Stars](https://img.shields.io/github/stars/Icy0077/CROWD-DENSITY-MONITOR?style=flat&label=stars)](https://github.com/Icy0077/CROWD-DENSITY-MONITOR/stargazers)
-[![Forks](https://img.shields.io/github/forks/Icy0077/CROWD-DENSITY-MONITOR?style=flat&label=forks)](https://github.com/Icy0077/CROWD-DENSITY-MONITOR/forks)
-[![Watchers](https://img.shields.io/github/watchers/Icy0077/CROWD-DENSITY-MONITOR?style=flat&label=watchers)](https://github.com/Icy0077/CROWD-DENSITY-MONITOR/watchers)
-[![Contributors](https://img.shields.io/github/contributors/Icy0077/CROWD-DENSITY-MONITOR?style=flat&label=contributors)](https://github.com/Icy0077/CROWD-DENSITY-MONITOR/graphs/contributors)
-[![Repo size](https://img.shields.io/github/repo-size/Icy0077/CROWD-DENSITY-MONITOR?style=flat&label=size)](https://github.com/Icy0077/CROWD-DENSITY-MONITOR)
-[![Last commit](https://img.shields.io/github/last-commit/Icy0077/CROWD-DENSITY-MONITOR?style=flat&label=last%20commit)](https://github.com/Icy0077/CROWD-DENSITY-MONITOR/commits)
-
-<!-- Add project-demo.gif here after recording a real demo -->
+[Repository](https://github.com/Icy0077/CROWD-DENSITY-MONITOR) · [Input sources](docs/input-sources.md) · [Telemetry schema](docs/telemetry-schema.md) · [AWS pipeline](docs/aws-cloud-pipeline.md)
 
 </div>
 
-> The star, fork, watcher, contributor, size and last-commit badges above are live GitHub counters from shields.io. Nothing is hard-coded. There is no CI workflow and no license file in the repository yet, so there are no build or license badges.
+## Live Demo
+
+Dashboard: [https://cloudcrowd-analytics-30d5kl99k-bmc-2ced.vercel.app](https://cloudcrowd-analytics-30d5kl99k-bmc-2ced.vercel.app)
 
 ---
 
-## The idea
+## Overview
 
-CloudCrowd turns camera input into useful crowd intelligence without making the cloud carry raw video.
+CloudCrowd Analytics is a crowd-density monitoring project. Its edge application processes camera frames, detects and tracks people, counts crossings of a virtual line, and maintains an occupancy count. It publishes aggregate telemetry through MQTT. AWS services process and store the latest facility state, and a React/Vite dashboard displays the API data.
 
-| 🧠 EDGE FIRST | 🔒 PRIVACY AWARE | 📡 TELEMETRY ONLY |
-|---|---|---|
-| Detection, tracking and counting run on the edge machine. | Privacy processing sits next to the frame source, in the same process. | The pipeline publishes derived statistics (counts, percentage, status), not frames. |
+The edge-to-cloud telemetry path sends counts and status rather than camera frames. This describes the application data flow; it is not a guarantee of privacy, anonymity, or regulatory compliance.
 
-**Telemetry goes to the cloud. Raw video stays at the edge.** That is the intended data flow and the architecture of this project. It is not a guarantee of complete privacy or security.
+## Key features
 
----
-
-## Project at a glance
-
-| | |
-|---|---|
-| 🎥 **Vision** | YOLOv8n (`yolov8n.pt`) + Ultralytics ByteTrack (`bytetrack.yaml`), person class only |
-| 🔐 **Privacy** | Gaussian blur step in the edge process (see [Privacy](#privacy-by-design) for exact status) |
-| 📡 **Transport** | MQTT via Paho; mutual TLS when `AWS_IOT_*` variables are set |
-| ☁️ **Cloud** | AWS IoT Core → Lambda → DynamoDB → API Gateway |
-| 🖥️ **Dashboard** | React + Vite, polls every 5 seconds |
-| 🧪 **Verification** | Frontend production build passes; Python test files are currently empty (see [Testing](#testing)) |
-
----
-
-## Status legend
-
-| Label | Meaning |
-|---|---|
-| ✅ **IMPLEMENTED** | Code exists in the repository |
-| 🧪 **TESTED** | Verified by an automated test or a reproducible check (stated per row) |
-| 🔬 **EXPERIMENTAL** | Code exists but is incomplete, unwired, or has known gaps |
-| 🚧 **FUTURE-READY** | Interface or UI scaffolding only; the backend or transport is missing |
-| 🗺️ **PLANNED** | Intended, nothing in the repository yet |
-
----
+- Person detection using Ultralytics YOLO and persistent ByteTrack IDs.
+- Configurable virtual-line crossing to count people entering and leaving.
+- Running occupancy estimate, clamped to zero.
+- Multiple implemented camera and video input adapters.
+- MQTT publishing, including mutual TLS configuration for AWS IoT Core.
+- AWS IoT Rule, Lambda, DynamoDB, and API Gateway integration defined in CloudFormation.
+- A 60-second rolling arrival-history window for the estimated queue-time proxy.
+- React/Vite dashboard with occupancy, movement, proxy estimate, trend, activity, and telemetry status.
+- Automated Python tests and an opt-in AWS IoT-to-API smoke test.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    A[Camera frame] --> B[YOLOv8n person detection]
+    A[Camera or input source] --> B[Edge AI: YOLO person detection]
     B --> C[ByteTrack IDs]
-    C --> D[Line-crossing logic]
-    D --> E[Occupancy + IN / OUT]
-    E --> F[Telemetry JSON]
-    F --> G[MQTT over TLS]
+    C --> D[Virtual line crossing]
+    D --> E[Occupancy + IN / OUT counts]
+    E --> F[Aggregate telemetry]
+    F --> G[MQTT]
     G --> H[AWS IoT Core]
     H --> I[IoT Rule]
-    I --> J[Lambda]
+    I --> J[Telemetry Lambda]
     J --> K[(DynamoDB)]
     K --> L[API Gateway]
-    L --> M[React dashboard]
+    L --> M[React / Vite dashboard]
 ```
 
-| Component | What it does | In this repo |
-|---|---|---|
-| **Edge** (`edge/`) | Reads webcam frames, runs detection and tracking, counts line crossings, builds telemetry, publishes over MQTT. | Code |
-| **AWS IoT Core** | Receives telemetry from the edge over MQTT/TLS on topic `cloudcrowd/telemetry`. | Client config only |
-| **IoT Rule** | Routes messages to Lambda. | Not defined here |
-| **Lambda** (`cloud/lambda/handler.py`) | Validates telemetry, recomputes wait estimate and status, writes latest state. | Code |
-| **DynamoDB** (`cloud/dynamodb/database.py`) | Stores the latest state per location (partition key `location_id`). | Code (table is external) |
-| **API Gateway** (`cloud/api/routes.py`) | Handler that returns the latest state for a facility. | Handler code only |
-| **React** (`frontend/`) | Polls `GET /telemetry/latest?facility_id=...` and renders the report. | Code |
+| Layer | Responsibility |
+|---|---|
+| Camera/input | Supplies frames from a local or network source. |
+| Edge AI | Detects people, tracks them between frames, counts line crossings, and updates occupancy. |
+| MQTT/AWS IoT Core | Transports the aggregate telemetry message to the configured IoT topic. |
+| Lambda | Validates and normalizes telemetry, maintains arrival history, calculates the proxy estimate, and updates facility state. |
+| DynamoDB | Stores the latest state and the bounded rolling arrival history for each `location_id`. |
+| API Gateway/API Lambda | Serves the latest state at `GET /telemetry/latest`. |
+| React/Vite | Polls the API and renders current and last-known telemetry. |
 
-> The IoT Rule, API Gateway, IAM, S3 and any CloudFormation resources are configured outside this repository. There is no infrastructure-as-code in it, so the deployed AWS resources cannot be verified from the source alone.
+The AWS resources and permissions are described in [`cloud/deployment/template.yaml`](cloud/deployment/template.yaml). See the [AWS pipeline guide](docs/aws-cloud-pipeline.md) for deployment prerequisites and the smoke-test procedure.
 
-### One pipeline. Different cameras.
+## Algorithms and queue-time estimate
 
-The goal is for every input type to feed the same detection, tracking, privacy and telemetry path:
+### Detection, tracking, and movement
 
-```mermaid
-flowchart LR
-    W[Laptop webcam]:::ok --> M[Input source]
-    U[USB camera]:::ok --> M
-    F[Video file]:::plan --> M
-    R[CCTV / RTSP]:::plan --> M
-    I[Wi-Fi / IP camera]:::plan --> M
-    P[Phone camera]:::future --> M
-    B[Bluetooth]:::future -. discovery and control only .-> M
-    M --> S[Same YOLO + ByteTrack]
-    S --> V[Same privacy step]
-    V --> T[Same telemetry]
-    T --> C[AWS]
-    classDef ok fill:#dfeee6,stroke:#3b7a5a,color:#1f3a2c
-    classDef future fill:#fbeed3,stroke:#b9852f,color:#5a3f10
-    classDef plan fill:#ececec,stroke:#888,color:#333
-```
+1. **YOLO** detects the person class in each frame.
+2. **ByteTrack** associates detections across frames using persistent track IDs.
+3. **Virtual line crossing** compares the tracked bounding-box center’s side of a configured line across observations. Crossing direction is classified as `IN` or `OUT`.
+4. **Occupancy** is updated as `max(0, previous occupancy + IN - OUT)`.
 
-Green is implemented, amber is future-ready, grey is planned.
+The count depends on detection and tracking quality, the line placement, camera view, and reliable track continuity.
 
----
+### Queue-time proxy
 
-## Feature grid
+The dashboard’s **Estimated Queue Time (Proxy)** is an estimate derived from current occupancy and observed arrivals. It is not a measured wait for an individual and does not guarantee how long a person will wait.
 
-| Feature | Status | Evidence / notes |
-|---|---|---|
-| Person detection | ✅ Implemented | `edge/vision/detector.py`, YOLOv8n, class 0 only, default confidence 0.25 |
-| ByteTrack tracking | ✅ Implemented | Ultralytics `model.track(..., tracker="bytetrack.yaml", persist=True)` |
-| IN / OUT line crossing | ✅ Implemented | Side-of-line test on box centre; `line` and `in_side` are constructor arguments |
-| Occupancy | ✅ Implemented | Running counter, clamped at 0. `docs/integration-audit.md` flags possible drift under noisy tracking |
-| Local privacy blur | 🔬 Experimental | Frame is blurred in memory; no toggle, no display or output uses it yet |
-| MQTT publisher | ✅ Implemented | Paho, QoS 1 by default |
-| MQTT over TLS to AWS IoT | ✅ Implemented | Mutual TLS via `tls_set(ca, cert, key)` when `AWS_IOT_*` is set |
-| Lambda validation | ✅ Implemented | Type, range and status checks, 400 on bad input |
-| DynamoDB latest state | ✅ Implemented | `put_item` / `get_item` keyed by `location_id` |
-| Latest-telemetry API handler | ✅ Implemented | 200, 400 and 404 responses |
-| React dashboard | ✅ Implemented · 🧪 build verified | `npm run build` succeeds |
-| Connected / Stale / Disconnected states | ✅ Implemented | `App.jsx`, `SystemStatus.jsx` |
-| Change-only activity and trend points | ✅ Implemented | See [Live data behaviour](#live-data-behaviour) |
-| Frontend 404 page | ✅ Implemented | Client-side, for any path other than `/` |
-| Input-source selector UI | 🚧 Future-ready | Calls `/input/status`, `/input/select`, `/input/devices` on an edge control server that is not in this repo |
-| Phone QR pairing UI | 🚧 Future-ready | Calls `/pair/session`, `/pair-status/...` on that same missing server |
-| WebRTC phone video | 🗺️ Planned | UI text mentions a signaling boundary; no media transport exists |
-| RTSP / IP camera / video-file input | 🗺️ Planned | Only a local webcam index is wired in `WebcamCapture` |
-| Bluetooth | 🚧 Future-ready | UI label only; see [Bluetooth](#bluetooth) |
-| Edge CLI (`--source`, `--model`, ...) | 🗺️ Planned | `edge/main.py` has no argument parser and no `__main__` entry point |
-| Camera HUD (FPS, IN/OUT, privacy keys 1/2) | 🗺️ Planned | No display or key handling exists in the edge code |
-| 5-second edge reporting interval | 🗺️ Planned | Edge publishes once per processed frame; only the dashboard polls every 5 s |
+The system uses two separate intervals:
 
----
+- **Telemetry reporting interval:** approximately **5 seconds** in the current configuration. Each `inflow`/`outflow` count represents crossings accumulated over the configured edge reporting interval.
+- **Queue observation window:** **60 seconds**. Lambda persists timestamped arrival samples in the existing DynamoDB facility item, expires samples outside the rolling window, and sums arrivals in that window.
 
-## Live demo
-
-> Add a real screen recording or GIF here.
-
-<!-- Add project-demo.gif here after recording a real demo -->
-
-A real demo would show: **camera → detection → tracking → local privacy → telemetry → dashboard.** There is no recording in the repository yet, so none is linked.
-
-## Screenshots
-
-<!-- Add screenshot: edge camera -->
-<!-- Add screenshot: dashboard -->
-<!-- Add screenshot: phone pairing -->
-<!-- Add screenshot: AWS telemetry -->
-
-No screenshots are committed yet.
-
----
-
-## Edge computer vision
+The proxy rate and estimate are:
 
 ```text
-Webcam frame
-  ↓  YOLOv8n person detection
-  ↓  ByteTrack (persistent track IDs)
-  ↓  Line-crossing logic (side-of-line change between frames)
-  ↓  Occupancy = max(0, occupancy + IN − OUT)
-  ↓  Privacy blur (in memory)
-  ↓  build_telemetry()
-  ↓  MQTT publish
+arrival rate (people/minute) = arrivals in the 60-second window / 1 minute
+estimated queue time (minutes) = current occupancy / arrival rate
 ```
 
-Tracking gives each person a persistent ID across frames. When a tracked centre moves from one side of the configured line to the other, it counts as IN or OUT depending on `in_side`. No model-accuracy numbers are published here because the repository contains no benchmarks.
+For example, 2 people in the monitored occupancy and 5 arrivals in a complete 60-second window yield a proxy estimate of `2 / 5 = 0.4 minutes`. Fractional values are retained in storage and the numeric API response; the dashboard formats them for display.
 
-**Performance** depends on hardware (CPU or GPU), model, inference size, camera resolution and tracking load. No FPS figure is claimed.
+A newly observed facility, or one without sufficient uninterrupted history, can have `estimated_wait_minutes` equal to `0` until the window is established. Zero is also returned for zero occupancy or no arrivals in a complete window. The numeric API field therefore does not distinguish all zero-estimate cases. Arrival volume is only a proxy for service rate; this is not a per-person join-to-service measurement.
 
-### Running the edge pipeline
+## Technologies
 
-`edge/main.py` defines an `EdgePipeline` class but no command-line entry point, so `python -m edge.main` does not start anything. To run it today, use it from Python (following the code; not executed in this review):
+| Area | Technologies |
+|---|---|
+| Edge/runtime | Python, OpenCV, NumPy |
+| Computer vision | Ultralytics YOLO, ByteTrack, PyTorch |
+| Input and movement | OpenCV capture adapters, tracked line-crossing logic |
+| Messaging | Paho MQTT |
+| Cloud | AWS IoT Core, AWS Lambda, DynamoDB, API Gateway, CloudFormation |
+| Dashboard | React, JavaScript/JSX, Vite, CSS |
+| Testing | pytest, Python `compileall`, Vite production build |
 
-```python
-from edge.main import EdgePipeline
-from edge.vision.detector import PersonDetector
+Python dependencies are listed in [`requirements.txt`](requirements.txt); frontend dependencies and scripts are in [`frontend/package.json`](frontend/package.json).
 
-# Counting line as ((x1, y1), (x2, y2)) in pixel coordinates
-detector = PersonDetector(line=((320, 0), (320, 480)), in_side="positive")
+## Supported input sources
 
-for result in EdgePipeline(detector=detector).run():
-    print(result["occupancy"], len(result["detections"]))
+The input factory implements the following adapters. Availability depends on the device, OpenCV/FFmpeg build, and source URL.
+
+| Input | Implementation and limitation |
+|---|---|
+| Webcam | Local OpenCV camera index; defaults to index `0`. |
+| USB camera | OpenCV camera index. |
+| Local video file | Supported media extensions include MP4, AVI, MOV, MKV, WEBM, and MJPEG. |
+| RTSP/CCTV | RTSP or RTSPS source, subject to network and OpenCV/FFmpeg support. |
+| Wi-Fi/IP camera | Compatible HTTP/HTTPS stream, including MJPEG where provided by the camera. |
+| Phone | Adapter exists; browser/WebRTC signaling and media delivery are not implemented as an end-to-end video input. A phone source requires a supported configured transport such as RTSP/HTTP. |
+| Bluetooth | Discovery/control metadata only; does not provide camera video. |
+
+Source configuration and additional limitations are documented in [`docs/input-sources.md`](docs/input-sources.md).
+
+## Local setup
+
+Commands below use Windows PowerShell. Use a Python version compatible with the installed dependencies and a recent Node.js/npm installation.
+
+```powershell
+git clone https://github.com/Icy0077/CROWD-DENSITY-MONITOR.git
+cd CROWD-DENSITY-MONITOR
+
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+
+Copy-Item .env.example .env
+Copy-Item frontend\.env.example frontend\.env.local
+
+Set-Location frontend
+npm install
+npm run dev
 ```
 
-The pipeline uses webcam index 0 by default and publishes through `MqttPublisher`. With no broker reachable, publishing raises an error.
+The dashboard requires `VITE_API_BASE_URL` (API base URL) and `VITE_FACILITY_ID` in `frontend/.env.local` to connect to a deployed API. `VITE_EDGE_CONTROL_URL` is used by the input/settings panel when a local edge control service is available. These are configuration values, not places for credentials or secrets.
 
----
+### Run the edge
 
-## Privacy by design
+Configure `.env` with the facility ID and input settings. Set `REPORTING_INTERVAL_SECONDS` to the interval represented by the edge `inflow`/`outflow` counts; the current configuration is approximately 5 seconds. For AWS IoT publishing, provide the required `AWS_IOT_*` endpoint, client, topic, and certificate file paths. Keep certificate and private-key files outside version control.
 
-```text
-Camera frames
-  ↓  local detection + privacy processing
-Derived telemetry
-  ↓
-AWS
+Example for a local webcam:
+
+```powershell
+.\.venv\Scripts\python.exe -m edge.main --input-type webcam --source 0
 ```
 
-What the code does today:
+Other examples:
 
-- Frames are processed in memory on the edge machine. Nothing in the repository writes frames to disk or sends them to AWS.
-- The telemetry payload contains only counts, percentages, a status and a timestamp (see below).
-- `PrivacyDrop` applies a 35×35 Gaussian blur to the frame after detection.
+```powershell
+.\.venv\Scripts\python.exe -m edge.main --input-type usb --source 1
+.\.venv\Scripts\python.exe -m edge.main --input-type file --source "C:\videos\sample.mp4"
+.\.venv\Scripts\python.exe -m edge.main --input-type rtsp --source "rtsp://camera-host:554/stream"
+.\.venv\Scripts\python.exe -m edge.main --input-type wifi --source "http://camera-host/stream"
+```
 
-What is **not** there yet:
+The edge pipeline uses MQTT settings from the environment. Without AWS IoT configuration it uses the configured local MQTT broker (default `localhost:1883`); a reachable broker is required to publish successfully. For all supported source options and security notes, see [`docs/input-sources.md`](docs/input-sources.md).
 
-- The blurred frame is not displayed or stored, so there is no visible privacy mode.
-- There is no Privacy ON / OFF toggle (no `1` / `2` key controls) and no camera window.
-- `tests/test_privacy.py` is empty, so the blur has no automated test.
+### Local API
 
-This is a design direction, not a claim of anonymization or legal compliance.
+The local API server can be started for development:
 
----
+```powershell
+.\.venv\Scripts\python.exe -m cloud.api.local_server
+```
 
-## Live telemetry
+It listens on `127.0.0.1:8000` and provides `/health` and `/telemetry/latest`. When configured without DynamoDB it may return mock values; do not treat those as live telemetry. This local server is not the deployed AWS API and does not replace the separate edge input-control service.
 
-The API returns this canonical payload. The edge MQTT message uses legacy transport names (`facility_id`, `inflow`, and `outflow`) and includes the measured batch duration as `reporting_interval_seconds`.
+## AWS deployment
+
+The CloudFormation template defines the existing AWS pipeline: an encrypted on-demand DynamoDB table, processor and API Lambda functions, scoped execution roles, an AWS IoT topic rule and Lambda permission, an IoT device policy attachment, and API Gateway GET/OPTIONS routes. The processor role requires DynamoDB `GetItem` and `PutItem` for reading rolling history and writing the latest state.
+
+The reporting interval configured for the edge must match the CloudFormation `ReportingIntervalSeconds` parameter. The current intended value is approximately **5 seconds**. The queue observation window remains **60 seconds** and is a separate Lambda code setting.
+
+The repository provides a package builder:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\package_cloud_lambda.py --output dist\cloudcrowd-lambda.zip
+```
+
+Deploy only in an AWS account where the operator has the required IAM, S3, Lambda, and CloudFormation permissions. Use a new versioned S3 object key for deployment artifacts, and configure the existing stack with the package bucket/key, facility capacity, reporting interval, facility ID, IoT topic/client/certificate ARN, and API stage. The deployment process and smoke-test prerequisites are described in [`docs/aws-cloud-pipeline.md`](docs/aws-cloud-pipeline.md). Do not place AWS credentials, certificates, private keys, or secret values in this repository.
+
+The public telemetry response uses these contract names:
 
 ```json
 {
   "location_id": "facility-1",
-  "timestamp": "2026-10-07T10:30:00Z",
-  "occupancy": 1,
+  "timestamp": "2026-09-17T10:30:00Z",
+  "occupancy": 12,
   "capacity": 100,
-  "occupancy_percentage": 1,
-  "people_in": 1,
-  "people_out": 0,
+  "occupancy_percentage": 12,
+  "people_in": 3,
+  "people_out": 1,
   "estimated_wait_minutes": 0,
   "status": "green"
 }
 ```
 
-| Field | Meaning |
-|---|---|
-| `location_id` | Facility identifier (from `FACILITY_ID`, default `facility-1`) |
-| `timestamp` | UTC ISO 8601 time the edge generated the message |
-| `occupancy` | Current tracked occupancy |
-| `capacity` | Capacity used for the percentage (default 100) |
-| `occupancy_percentage` | `occupancy / capacity × 100`, rounded |
-| `people_in` / `people_out` | IN and OUT crossings counted in the frame that produced this message |
-| `estimated_wait_minutes` | A proxy estimate: Lambda divides current occupancy by arrivals/minute aggregated over a rolling 60-second window. It is 0 while there is insufficient history, occupancy is zero, or the full window has no arrivals. |
-| `status` | `green` below 50%, `yellow` from 50% to 80%, `red` above 80% |
+`arrival_history` is internal DynamoDB state and is not included in the API response. The timestamp above is an illustrative schema example, not a live reading. See [`docs/telemetry-schema.md`](docs/telemetry-schema.md) for field definitions.
 
-The dashboard also accepts the older names `facility_id`, `inflow`, `outflow` and `wait_time`, and shows `inflow` and `outflow` in its UI. `docs/telemetry-schema.md` is the schema reference. Its example uses `library_01`, so treat `facility-1` as this project's live facility, not the schema doc's sample.
+## Frontend and Vercel
 
-### Live data behaviour
+The frontend is a Vite application in `frontend/`. To build it locally:
 
-The dashboard polls every 5 seconds without overlapping requests. A 5-second poll does **not** mean a crowd event happens every 5 seconds. A new activity entry and trend point are added only when the returned telemetry differs from the previous reading in at least one field (the comparison includes `timestamp`). If nothing changed, the display keeps the old points instead of inventing activity.
-
----
-
-## Dashboard
-
-React + Vite, JavaScript/JSX and CSS. It shows:
-
-- occupancy and capacity, with utilization percentage and a status line
-- IN / OUT movement, estimated wait time (from the API) and a status colour
-- last successful update, with **Connected / Stale / Disconnected** states
-- live activity log (last 20 changes) and a client-side session trend (last 24 points)
-- an input-source panel (🚧 future-ready, see above)
-
-It uses real API telemetry. When the API fails, the last good reading is kept and marked **Stale**, and no fallback or demo data is substituted. The local development server in `cloud/api` is the exception: it can return mock data (see [Local API](#local-api)).
-
-**Design:** editorial and information-design led. Serif type, a warm paper-like background, charcoal text, restrained green, amber and red status colours, a movement visualization and subtle animation.
-
----
-
-## Input Sources
-
-| Source | Status | Notes |
-|---|---|---|
-| Laptop webcam / local camera index | ✅ Implemented, hardware-dependent | OpenCV camera index, normally `0` |
-| USB camera | ✅ Implemented, hardware-dependent | Another OpenCV camera index, for example `1` |
-| Local video file | ✅ Implemented, hardware-dependent | Local `.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`, or `.mjpeg` path |
-| CCTV / RTSP | ✅ Implemented, configuration-dependent | Requires a reachable RTSP URL |
-| Wi-Fi / IP camera | ✅ Implemented, configuration-dependent | Requires a reachable RTSP/HTTP/MJPEG URL |
-| Phone camera | 🚧 Not video-ready | QR pairing exists, but WebRTC frame reception is not implemented |
-| Bluetooth | ⚠️ Control/discovery only | Bluetooth camera video is not supported |
-
-When `edge.main` is running, its local input-control server shares the same `InputDeviceManager` as the detection loop. A successful `POST /input/select` validates and opens the replacement source, probes a frame, then atomically swaps it into the running pipeline. A failed switch leaves the previous source in place.
-
-### Phone QR pairing 🚧
-
-The intended experience:
-
-```text
-Desktop: Generate QR  →  Phone scans  →  Pairing page  →  Camera permission
-→  Start camera  →  Wi-Fi / WebRTC  →  Edge  →  YOLO + ByteTrack  →  AWS telemetry
+```powershell
+Set-Location frontend
+npm install
+npm run build
 ```
 
-The dashboard requests a short-lived pairing session, renders a QR code, and the local edge server provides a camera-permission page. The WebRTC signaling/media receiver that would turn the browser stream into OpenCV frames is not implemented, so Phone is not reported as an active video source.
+For a Vercel deployment, configure the project root as `frontend`, use `npm run build` as the build command, and use `dist` as the output directory. Set `VITE_API_BASE_URL` to the API base URL and `VITE_FACILITY_ID` to the facility the dashboard should request. `VITE_EDGE_CONTROL_URL` is optional and applies only when a reachable local edge control service is available. Vite variables are bundled into client-side code; never put credentials, tokens, or other secrets in them. The repository contains no Vercel deployment credentials or secrets.
 
-### Bluetooth
+The dashboard polls the latest API reading every 5 seconds without overlapping requests. It keeps the last successful response when a later request fails and marks telemetry stale; it does not fabricate replacement telemetry. Frontend headers in `frontend/public/_headers` are honored only by hosts that support that file convention; verify deployment-host behavior separately.
 
-Bluetooth is treated as discovery, pairing and control metadata only. Bluetooth camera video is not supported. Use USB, Webcam, Wi-Fi/RTSP, CCTV/RTSP, or Phone after a WebRTC receiver is added.
+## Telemetry and data flow
 
----
-
-## Security
-
-CloudCrowd follows an edge-first security model and implements practical application and infrastructure hardening. Deployments should still be reviewed for network exposure, credentials, IAM permissions, camera security and infrastructure configuration.
-
-**Controls present in the repository**
-
-| Area | Control |
-|---|---|
-| Secrets | `.env` and `.env.*` ignored (except `.env.example`); `*.pem`, `*.crt`, `*.key`, `*.p12`, `*.cert`, `*.pfx`, `*.der` ignored; `.env.example` contains only placeholders |
-| AWS IoT | Mutual TLS with CA, device certificate and private key supplied by file path; all six `AWS_IOT_*` settings required together; missing certificate files fail fast |
-| Cloud input validation | Lambda rejects non-object events, non-string IDs, non-numeric or negative values, zero capacity and invalid status, returning `400` |
-| API behaviour | Missing `facility_id` returns `400`; unknown facility returns `404` |
-| Frontend validation | Telemetry responses are checked for required fields, finite numbers and a valid timestamp before display; failures show a generic message, not internals |
-| Frontend 404 | Any path other than `/` renders a 404 page |
-| Frontend headers | `frontend/public/_headers` sets CSP, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, HSTS and `Cache-Control: no-store`, honoured only on hosts that support a `_headers` file |
-| Secrets in frontend | Only `VITE_*` values; the README for the frontend warns not to put credentials there |
-| Privacy | No code path stores or uploads frames; telemetry is aggregate counts |
-
-**Known gaps (current state)**
-
-- The local dev server (`cloud/api/local_server.py`) sends `Access-Control-Allow-Origin: *`, has no authentication, and is for local testing only.
-- No API authentication, rate limiting or CORS configuration for the deployed API is defined in this repository.
-- The MQTT publisher defaults to plaintext `localhost:1883`. If `MQTT_USERNAME` is set without `AWS_IOT_*`, TLS is not enabled even when `MQTT_TLS=true`.
-- There is no RTSP handling, so no SSRF or RTSP-credential controls exist yet. Those become relevant if network camera input is added.
-- The API handler falls back to mock telemetry when `DYNAMODB_TABLE` is unset, which can hide a misconfiguration.
-- `cloud/iot/device.py` reads certificate paths from `AWS_IOT_ROOT_CA`, `AWS_IOT_CERTIFICATE` and `AWS_IOT_PRIVATE_KEY`, which differ from the names used by the edge publisher.
-- Dependencies are pinned in `requirements.txt`; the frontend uses `latest` for React, Vite and the React plugin. No dependency scanning is configured.
-
-`docs/security-audit.md` and `docs/integration-audit.md` hold the project's own audit notes. They were written at different times, and some findings (for example the privacy stub) are marked fixed in one and open in the other.
-
----
-
-## Error handling
-
-| Situation | Behaviour |
-|---|---|
-| Unknown frontend route | Client-side 404 page with a link back to `/` |
-| API `404` (no state for facility) | Error message shown; connection state follows the previous successful update |
-| Malformed telemetry | Frontend shows "Telemetry response is invalid."; Lambda returns `400` |
-| API unavailable | Frontend shows "Unable to load telemetry right now."; **Stale** if a previous reading exists |
-| Never connected | **Connecting** while loading, then **Disconnected** |
-
----
-
-## Repository structure
+The edge MQTT transport message uses:
 
 ```text
-CROWD-DENSITY-MONITOR/
+facility_id, timestamp, occupancy, inflow, outflow
+```
+
+Lambda maps the transport fields to the canonical API/DynamoDB contract:
+
+| API field | Source or meaning |
+|---|---|
+| `location_id` | Edge `facility_id` |
+| `timestamp` | UTC ISO 8601 telemetry timestamp |
+| `occupancy` | Current edge occupancy count |
+| `capacity` | Configured facility capacity |
+| `occupancy_percentage` | Occupancy divided by capacity, rounded to an integer percentage |
+| `people_in` | Edge `inflow` count for the reporting interval |
+| `people_out` | Edge `outflow` count for the reporting interval |
+| `estimated_wait_minutes` | Numeric queue-time proxy in minutes |
+| `status` | `green`, `yellow`, or `red`, derived from occupancy percentage |
+
+The API returns `location_id`, `people_in`, and `people_out`; it does not rename those response fields to `facility_id`, `inflow`, or `outflow`.
+
+## Privacy and security
+
+- Camera frames are processed in the edge application. The telemetry publisher sends counts and related aggregate fields, not video frames.
+- The edge detector applies a Gaussian blur to its in-memory processed frame; this is not a guarantee of anonymization and does not establish legal compliance.
+- AWS IoT mutual TLS uses certificate files supplied by runtime configuration. Keep credentials and certificate material outside the repository.
+- The root `.gitignore` excludes `.env` files (except `.env.example`), common key/certificate extensions, virtual environments, build output, and Vercel local files. Review ignore rules before adding configuration artifacts.
+- Do not put secrets in frontend `VITE_*` variables; those values are public in the built client.
+- Review IAM scope, network exposure, API authentication, rate limiting, and deployed CORS/security settings for each environment. The presence of CloudFormation resources does not by itself establish that a deployment is secure.
+- The local API server is for development and should not be exposed as a public service.
+
+## Limitations and accuracy considerations
+
+- Detection quality depends on camera placement, occlusion, lighting, model confidence, compute capacity, and source frame quality. This repository does not publish accuracy or FPS benchmarks.
+- Line placement, crossing direction, missed detections, false tracks, and track loss can cause count errors. Occupancy is a running counter and may drift; it is not an independent count of every frame.
+- The queue-time value is an aggregate proxy based on occupancy and observed arrivals. Arrivals are not necessarily the service rate, and the value is not an individual measured waiting time.
+- The estimate can remain zero during startup, after gaps in telemetry history, with zero occupancy, or with no arrivals in a complete observation window.
+- The phone browser/WebRTC media path is incomplete, and Bluetooth does not carry video.
+- RTSP and network camera compatibility depends on network reachability and the OpenCV/FFmpeg build.
+- API access controls and deployment-host behavior should be validated in the target AWS and frontend environments.
+
+## Pros and trade-offs
+
+| Advantages | Trade-offs |
+|---|---|
+| Video inference and counting run at the edge; the cloud pipeline receives telemetry rather than video. | Edge inference requires suitable hardware and camera configuration. |
+| Persistent tracks support directional line-crossing counts. | Detection/tracking errors can accumulate into occupancy drift. |
+| Modular input adapters support local cameras, files, and compatible network streams. | Phone browser video and Bluetooth camera transport are not end-to-end video inputs. |
+| CloudFormation describes the AWS ingestion, storage, and read API resources. | AWS deployment requires correctly scoped permissions, credentials, certificates, and matching edge/cloud interval configuration. |
+| Dashboard distinguishes live, stale, and unavailable telemetry. | The queue-time number is a proxy; it is not a service-time measurement. |
+
+## Testing and project status
+
+The current verified local test suite reports **74 passed**. Python compilation and the production frontend build have also passed.
+
+```powershell
+.\.venv\Scripts\python.exe -m compileall edge tests
+.\.venv\Scripts\python.exe -m pytest -q
+
+Set-Location frontend
+npm run build
+Set-Location ..
+git diff --check
+```
+
+The opt-in AWS pipeline smoke test requires configured AWS IoT TLS files, AWS credentials, and the relevant deployment/test settings. Run it after completing the setup in the AWS pipeline guide:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\smoke_test_aws_pipeline.py
+```
+
+The latest verified run reported:
+
+```text
+IOT_RECEIVE: PASS
+LAMBDA_EXECUTION: PASS
+DYNAMODB_UPDATE: PASS
+API_STATE_MATCH: PASS
+```
+
+The smoke script exits successfully when all stages pass. Its current successful run does not print an additional `AWS_PIPELINE_SMOKE_TEST: PASS` line.
+
+**Project status:** Edge detection/tracking, line-crossing telemetry, cloud ingestion/storage/API, rolling arrival history, dashboard display, and automated tests are implemented. Phone WebRTC video input remains incomplete. Queue-time estimates remain proxies with the limitations described above.
+
+## Repository layout
+
+```text
+.
 ├── cloud/
-│   ├── api/            # Latest-telemetry handler (routes.py) and local dev server
-│   ├── dynamodb/       # OccupancyStateStore (DynamoDB read/write)
-│   ├── iot/            # AwsIotDevice MQTT client helper
-│   └── lambda/         # Telemetry ingest + validation handler
-├── docs/               # Setup notes, manual test reports, schema, audits
+│   ├── api/             # API handler and local development server
+│   ├── deployment/      # AWS CloudFormation template
+│   ├── dynamodb/        # Latest-state storage and arrival-history persistence
+│   ├── iot/             # AWS IoT helper
+│   └── lambda/          # Telemetry validation and rolling-window calculation
+├── docs/                # Setup, schema, cloud pipeline, and project notes
 ├── edge/
-│   ├── main.py         # EdgePipeline (capture → detect → telemetry → publish)
-│   ├── mqtt/           # MqttPublisher, build_telemetry
-│   ├── privacy/        # PrivacyDrop (Gaussian blur)
-│   ├── tracking/       # Placeholder (empty); tracking runs through Ultralytics
-│   └── vision/         # PersonDetector, WebcamCapture
-├── frontend/           # React + Vite dashboard
-├── integration/        # pipeline_test.py (currently empty)
-├── scripts/            # test_aws_iot.py: opt-in AWS IoT connectivity test
-├── tests/              # test_detection / test_privacy / test_tracking (currently empty)
-├── .env.example
-├── .gitignore
-├── requirements.txt
-└── yolov8n.pt          # YOLOv8n weights
+│   ├── input/           # Webcam, USB, file, RTSP, Wi-Fi/IP, phone, Bluetooth adapters
+│   ├── mqtt/            # MQTT publisher and telemetry transport shape
+│   ├── privacy/         # In-memory frame privacy processing
+│   ├── tracking/        # Tracking utilities
+│   └── vision/          # Person detector and tracker configuration
+├── frontend/            # React/Vite dashboard
+├── scripts/             # Lambda packaging and opt-in AWS checks
+├── tests/                # Python automated tests
+├── .env.example          # Non-secret configuration placeholders
+└── requirements.txt      # Python dependencies
 ```
 
-`edge/config/settings.py` and `cloud/api/routes.md` are also empty placeholders.
+## Project
 
----
-
-## Getting started
-
-Commands are written for Windows PowerShell, which matches the project's configuration examples. The Python code itself is not Windows-specific.
-
-```powershell
-# 1. Clone
-git clone https://github.com/Icy0077/CROWD-DENSITY-MONITOR.git
-cd CROWD-DENSITY-MONITOR
-
-# 2-4. Python environment and dependencies
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-
-# 5. Frontend dependencies
-cd frontend
-npm install
-cd ..
-```
-
-**6. Configure the environment**
-
-```powershell
-Copy-Item .env.example .env
-Copy-Item frontend\.env.example frontend\.env.local
-```
-
-Edge (`.env`):
-
-```dotenv
-FACILITY_ID=facility-1
-
-AWS_IOT_ENDPOINT=<your-endpoint>
-AWS_IOT_CLIENT_ID=<your-client-id>
-AWS_IOT_TOPIC=cloudcrowd/telemetry
-AWS_IOT_PORT=8883
-AWS_IOT_CA_PATH=<path-to-root-ca>
-AWS_IOT_CERT_PATH=<path-to-certificate>
-AWS_IOT_PRIVATE_KEY_PATH=<path-to-private-key>
-```
-
-Frontend (`frontend/.env.local`):
-
-```dotenv
-VITE_API_BASE_URL=<your-api-gateway-base-url>
-VITE_FACILITY_ID=facility-1
-VITE_EDGE_CONTROL_URL=http://127.0.0.1:8000
-```
-
-`frontend/.env.example` ships with an API Gateway URL for the maintainer's `facility-1` deployment; replace it with your own. Do not put AWS keys, certificates or camera credentials in any `VITE_*` variable or in committed files.
-
-**7. AWS IoT certificates:** create a Thing and certificate in AWS IoT Core, download the root CA, device certificate and private key, store them outside the repository and point the `AWS_IOT_*_PATH` variables at them. See `docs/aws-iot-setup.md`. To check connectivity: `python scripts/test_aws_iot.py` (opt-in; needs real AWS IoT configuration).
-
-**8. Tests:** see [Testing](#testing).
-
-**9. Start the edge:** see [Running the edge pipeline](#running-the-edge-pipeline).
-
-**10. Start the frontend:**
-
-```powershell
-cd frontend
-npm run dev
-```
-
-## Quick start (dashboard only)
-
-```powershell
-cd frontend
-npm install
-npm run dev
-```
-
-The dashboard reads from whatever `VITE_API_BASE_URL` points to. For the edge side, use the snippet in [Running the edge pipeline](#running-the-edge-pipeline).
-
-### Local API
-
-```powershell
-python -m cloud.api.local_server
-```
-
-Serves `/health` and `/telemetry/latest` on `127.0.0.1:8000`. Without `DYNAMODB_TABLE` it returns **mock** values, so do not treat that output as live telemetry. It also uses port 8000, the same default as `VITE_EDGE_CONTROL_URL`, and it does not implement the `/input` or `/pair` routes the dashboard's input panel expects.
-
----
-
-## Testing
-
-| Check | Status |
-|---|---|
-| Frontend production build (`cd frontend; npm run build`) | ✅ Passes when run for this README |
-| `pytest` | ⚠️ `tests/test_detection.py`, `test_privacy.py`, `test_tracking.py` and `integration/pipeline_test.py` are empty, so pytest runs no tests |
-| Manual test reports | `docs/` contains dated reports for the edge pipeline, MQTT, Lambda/DynamoDB/API handlers and the frontend. They are written records, not automated tests |
-| AWS IoT connectivity | `scripts/test_aws_iot.py`, opt-in and requires real credentials |
-
-`pytest` is in `requirements.txt`, ready for tests to be added. Run `python -m pytest` after installing dependencies.
-
----
-
-## Roadmap
-
-- 🗺️ Edge CLI with `--source` and camera options
-- 🗺️ Reporting interval on the edge (currently one message per processed frame)
-- 🗺️ Visible privacy mode and runtime toggle
-- 🗺️ RTSP, IP camera and video-file inputs behind one input-source layer
-- 🚧 Edge control server for the dashboard's input panel
-- 🚧 Phone QR pairing page and WebRTC media path
-- 🗺️ Automated tests for detection, tracking, privacy and the end-to-end telemetry flow
-- 🗺️ Infrastructure-as-code for the AWS resources
-- 🗺️ CI workflow and a license
-
----
-
-## Project information
-
-- **Repository:** [github.com/Icy0077/CROWD-DENSITY-MONITOR](https://github.com/Icy0077/CROWD-DENSITY-MONITOR)
-- **Clone:** `git clone https://github.com/Icy0077/CROWD-DENSITY-MONITOR.git`
-- **Maintainer:** [@Icy0077](https://github.com/Icy0077)
-
-<div align="center">
-
-*Built for live monitoring, designed for extensibility.*
-
-[ View on GitHub ](https://github.com/Icy0077/CROWD-DENSITY-MONITOR)
-
-</div>
+- Repository: [Icy0077/CROWD-DENSITY-MONITOR](https://github.com/Icy0077/CROWD-DENSITY-MONITOR)
+- Maintainer: [@Icy0077](https://github.com/Icy0077)
