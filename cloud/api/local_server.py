@@ -23,6 +23,12 @@ def input_manager():
     return _input_manager
 
 
+def configure_input_manager(manager):
+    """Attach the HTTP control surface to the manager used by edge.main."""
+    global _input_manager
+    _input_manager = manager
+
+
 class TelemetryRequestHandler(BaseHTTPRequestHandler):
     def _send_json(self, status_code, payload):
         body = json.dumps(payload).encode("utf-8")
@@ -143,33 +149,50 @@ const token="{safe_token}";let stream;const status=document.getElementById('stat
             self._send_json(404, {"error": "Not found"})
             return
         if self.path == "/input/connect":
-            self._send_json(200, input_manager().connect()); return
+            try:
+                self._send_json(200, input_manager().connect())
+            except RuntimeError as exc:
+                self._send_json(409, {"error": str(exc), "status": input_manager().status})
+            return
         if self.path == "/input/disconnect":
-            input_manager().disconnect(); self._send_json(200, input_manager().status); return
+            self._send_json(200, input_manager().disconnect()); return
         try:
             length = min(int(self.headers.get("Content-Length", 0)), 4096)
             payload = json.loads(self.rfile.read(length) or b"{}")
             if not isinstance(payload, dict) or payload.get("input_type") not in {"webcam", "usb", "file", "rtsp", "cctv", "wifi", "phone", "bluetooth"}:
                 raise ValueError("Unsupported input type")
-            status = input_manager().select(source=payload.get("source"), input_type=payload.get("input_type"))
+            source = payload.get("source", payload.get("path", payload.get("url", payload.get("device_index"))))
+            status = input_manager().select(source=source, input_type=payload.get("input_type"))
             self._send_json(200, status)
-        except (ValueError, TypeError, json.JSONDecodeError):
-            self._send_json(400, {"error": "Invalid input selection"})
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            self._send_json(400, {"error": str(exc) or "Invalid input selection"})
+        except RuntimeError as exc:
+            self._send_json(409, {"error": str(exc), "status": input_manager().status})
 
     def log_message(self, format_string, *args):
         print(f"[local-api] {format_string % args}")
 
 
-def run_server(host="127.0.0.1", port=8000):
+def run_server(host="127.0.0.1", port=8000, manager=None, quiet=False):
+    if manager is not None:
+        configure_input_manager(manager)
     server = HTTPServer((host, port), TelemetryRequestHandler)
-    print(f"[local-api] listening on http://{host}:{port}")
-    print("[local-api] endpoints: /health, /telemetry, /telemetry/latest")
+    if not quiet:
+        print(f"[local-api] listening on http://{host}:{port}")
+        print("[local-api] endpoints: /health, /telemetry, /telemetry/latest")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\n[local-api] shutting down")
     finally:
         server.server_close()
+
+
+def start_server_in_thread(manager, host="127.0.0.1", port=8000):
+    import threading
+    thread = threading.Thread(target=run_server, kwargs={"host": host, "port": port, "manager": manager, "quiet": True}, daemon=True)
+    thread.start()
+    return thread
 
 
 if __name__ == "__main__":

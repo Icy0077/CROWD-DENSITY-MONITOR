@@ -4,7 +4,7 @@ function formatTime(date) {
 }
 
 export default function Header({ currentTime, lastTelemetryAt, telemetryStatus }) {
-  const statusLabel = { live: 'Live', stale: 'Stale', disconnected: 'Disconnected' }[telemetryStatus]
+  const statusLabel = { live: 'Live telemetry', stale: 'Stale telemetry', disconnected: 'Telemetry disconnected' }[telemetryStatus]
 
   return (
     <header className="dashboard-header masthead">

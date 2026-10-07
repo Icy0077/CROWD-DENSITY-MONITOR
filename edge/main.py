@@ -8,7 +8,7 @@ import time
 import cv2
 
 from .mqtt.publisher import MqttPublisher, build_telemetry
-from .input import create_input_source
+from .input import InputDeviceManager
 from .vision.detector import PersonDetector
 from .vision.webcam import WebcamCapture
 
@@ -65,7 +65,7 @@ class EdgePipeline:
 		self.facility_id = facility_id or os.getenv("FACILITY_ID", "facility-1")
 		interval = reporting_interval_seconds
 		if interval is None:
-			interval = os.getenv("REPORTING_INTERVAL_SECONDS", "5")
+			interval = os.getenv("REPORTING_INTERVAL_SECONDS", "60")
 		self.reporting_interval_seconds = float(interval)
 		if not math.isfinite(self.reporting_interval_seconds) or self.reporting_interval_seconds <= 0:
 			raise ValueError("reporting_interval_seconds must be greater than zero")
@@ -281,13 +281,19 @@ def run_visual_demo(
 			raise ValueError("width and height must be provided together")
 		if width is None:
 			width, height = 1280, 720
-	camera = create_input_source(
+	camera = InputDeviceManager(
 		source=source,
 		input_type=input_type,
 		width=width,
 		height=height,
 		webcam_capture_cls=WebcamCapture,
 	)
+	if os.getenv("EDGE_CONTROL_ENABLED", "1").lower() not in {"0", "false", "no"}:
+		try:
+			from cloud.api.local_server import start_server_in_thread
+			start_server_in_thread(camera, host=os.getenv("EDGE_CONTROL_HOST", "127.0.0.1"), port=int(os.getenv("EDGE_CONTROL_PORT", "8000")))
+		except (OSError, ValueError) as exc:
+			print(f"Input control API unavailable: {exc}")
 	screen_dimensions = _screen_dimensions()
 	detector = None
 	privacy_enabled = True
@@ -295,7 +301,7 @@ def run_visual_demo(
 	total_out = 0
 	facility_id = os.getenv("FACILITY_ID", "facility-1")
 	try:
-		interval = float(os.getenv("REPORTING_INTERVAL_SECONDS", "5"))
+		interval = float(os.getenv("REPORTING_INTERVAL_SECONDS", "60"))
 	except ValueError as exc:
 		raise ValueError("REPORTING_INTERVAL_SECONDS must be a positive number") from exc
 	if not math.isfinite(interval) or interval <= 0:
@@ -324,7 +330,7 @@ def run_visual_demo(
 				ok, frame = capture.read()
 				if not ok:
 					failed_reads += 1
-					if getattr(capture, "is_live", False) and failed_reads < 4:
+					if getattr(capture.source, "is_live", False) and failed_reads < 4:
 						time.sleep(0.05)
 						continue
 					break

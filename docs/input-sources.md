@@ -27,7 +27,7 @@ Examples:
 .\.venv\Scripts\python.exe -m edge.main --input-type phone --source "rtsp://phone-host/stream"
 ```
 
-Equivalent configuration uses `INPUT_TYPE`, `INPUT_SOURCE`, `CAMERA_USERNAME`, and `CAMERA_PASSWORD`. Credential-bearing URLs are redacted in source descriptions and errors. The default remains `FACILITY_ID=facility-1` and `REPORTING_INTERVAL_SECONDS=5`.
+Equivalent configuration uses `INPUT_TYPE`, `INPUT_SOURCE`, `CAMERA_USERNAME`, and `CAMERA_PASSWORD`. Credential-bearing URLs are redacted in source descriptions and errors. The default is `FACILITY_ID=facility-1` and `REPORTING_INTERVAL_SECONDS=60`, matching the Lambda and CloudFormation defaults used for wait-time calculation.
 
 ## Phone browser mode
 

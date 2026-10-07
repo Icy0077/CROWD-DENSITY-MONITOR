@@ -18,8 +18,8 @@ export default function LiveActivity({ telemetry, activityLog }) {
     <section className="activity-section activity-report" aria-label="Live activity">
       <header className="report-heading compact-heading">
         <div>
-          <p className="report-kicker">Live activity</p>
-          <h2>A chronological reading of movement</h2>
+          <p className="report-kicker">Crowd activity</p>
+          <h2>Movement from this session</h2>
         </div>
         {insight && <p className="report-dek">{insight}</p>}
       </header>

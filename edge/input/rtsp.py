@@ -73,5 +73,11 @@ class RtspSource(InputSource):
             self.capture = None
 
     @property
+    def status(self):
+        return {"type": self.input_type, "description": self.description, "source": self.redacted_url,
+                "connection": self.connection, "connected": self.capture is not None,
+                "video_available": self.capture is not None}
+
+    @property
     def description(self):
         return f"RTSP source {self.redacted_url}"

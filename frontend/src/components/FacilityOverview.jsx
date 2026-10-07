@@ -10,6 +10,7 @@ function statusLabel(status) {
 
 export default function FacilityOverview({ data }) {
   const { facilityId, occupancy, capacity, utilization, estimatedWaitTime, inflow, outflow, status } = data
+  const facilityName = facilityId === 'facility-1' ? 'Facility 1' : facilityId || 'Awaiting live telemetry'
   const percentage = utilization === null || utilization === undefined
     ? null
     : Math.max(0, Math.min(100, utilization))
@@ -19,7 +20,7 @@ export default function FacilityOverview({ data }) {
       <header className="report-heading">
         <div>
           <p className="report-kicker">Facility 01</p>
-          <h1>{facilityId || 'Awaiting live telemetry'}</h1>
+          <h1>{facilityName}</h1>
         </div>
         <p className="report-dek">A live reading of the room, updated from the camera pipeline.</p>
       </header>

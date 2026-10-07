@@ -1,10 +1,14 @@
 export default function TrendChart({ points, labels }) {
+  const visibleLabels = labels.length > 2
+    ? [labels[0], labels[Math.floor((labels.length - 1) / 2)], labels[labels.length - 1]]
+    : labels
+
   if (points.length < 2) {
     return (
       <section className="trend-section" aria-label="Occupancy trend">
         <div className="section-heading">
-          <h2>Occupancy Trend</h2>
-          <span className="trend-session-label">Client-side session trend</span>
+        <h2>Session Trend</h2>
+          <span className="trend-session-label">Real readings from this session</span>
         </div>
         <div className="card trend-card">
           <div className="empty-state">
@@ -48,8 +52,8 @@ export default function TrendChart({ points, labels }) {
   return (
     <section className="trend-section" aria-label="Occupancy trend">
       <div className="section-heading">
-        <h2>Occupancy Trend</h2>
-        <span className="trend-session-label">Client-side session trend</span>
+        <h2>Session Trend</h2>
+        <span className="trend-session-label">Real readings from this session</span>
       </div>
 
       <div className="card trend-card">
@@ -99,7 +103,7 @@ export default function TrendChart({ points, labels }) {
 
           {labels.length > 0 && (
             <div className="trend-labels">
-              {labels.map((label, i) => (
+              {visibleLabels.map((label, i) => (
                 <span key={`${label}-${i}`}>{label}</span>
               ))}
             </div>

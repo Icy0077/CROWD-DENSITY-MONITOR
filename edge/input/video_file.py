@@ -31,5 +31,11 @@ class VideoFileSource(InputSource):
             self.capture = None
 
     @property
+    def status(self):
+        return {"type": self.input_type, "description": self.description, "source": self.source,
+                "connection": self.connection, "connected": self.capture is not None,
+                "video_available": self.capture is not None}
+
+    @property
     def description(self):
         return f"video file {self.path}"

@@ -5,6 +5,7 @@ function formatTime(date) {
 
 export default function SystemStatus({ telemetryStatus, apiError, lastTelemetryAt, currentTime, onRetry }) {
   const connectionState = telemetryStatus
+  const apiLabel = apiError ? 'Disconnected' : 'Healthy'
   const connectionLabel = {
     live: 'Live', stale: 'Stale', disconnected: 'Disconnected',
   }[telemetryStatus]
@@ -12,23 +13,23 @@ export default function SystemStatus({ telemetryStatus, apiError, lastTelemetryA
   return (
     <section className="system-section" aria-label="System status">
       <div className="section-heading">
-        <h2>System Status</h2>
+        <h2>Cloud Status</h2>
       </div>
       <div className="card system-card">
         <div className="system-rows">
           <div className="system-row">
-            <span className="system-label">Telemetry Status</span>
+            <span className="system-label">Cloud telemetry</span>
             <span className={`system-value connection-${connectionState}`}>
               <span className="status-dot-sm" />
               {connectionLabel}
             </span>
           </div>
           <div className="system-row">
-            <span className="system-label">Current Time</span>
-            <span className="system-value">{formatTime(currentTime)}</span>
+            <span className="system-label">API status</span>
+            <span className="system-value">{apiLabel}</span>
           </div>
           <div className="system-row">
-            <span className="system-label">Last Telemetry</span>
+            <span className="system-label">Last telemetry</span>
             <span className="system-value">{formatTime(lastTelemetryAt)}</span>
           </div>
           <div className="system-row">

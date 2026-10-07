@@ -122,7 +122,7 @@ def test_visual_demo_does_not_log_failed_publish_and_closes_publisher(monkeypatc
 	assert "Published telemetry:" not in capsys.readouterr().out
 
 
-def test_edge_pipeline_defaults_to_facility_one_and_five_second_interval(monkeypatch):
+def test_edge_pipeline_defaults_to_facility_one_and_sixty_second_interval(monkeypatch):
 	monkeypatch.delenv("FACILITY_ID", raising=False)
 	monkeypatch.delenv("REPORTING_INTERVAL_SECONDS", raising=False)
 
@@ -133,7 +133,7 @@ def test_edge_pipeline_defaults_to_facility_one_and_five_second_interval(monkeyp
 	)
 
 	assert pipeline.facility_id == "facility-1"
-	assert pipeline.reporting_interval_seconds == 5
+	assert pipeline.reporting_interval_seconds == 60
 
 
 def test_privacy_defaults_on_and_keyboard_controls_toggle_visual_state():

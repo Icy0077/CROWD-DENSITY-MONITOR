@@ -44,7 +44,9 @@ class BluetoothSource(InputSource):
 
     @property
     def status(self):
-        return {"type": self.input_type, **self.adapter.status}
+        return {"type": self.input_type, "video_available": False,
+                "message": "Bluetooth camera video is not supported. Use Wi-Fi/RTSP, USB, Webcam, or Phone.",
+                **self.adapter.status}
 
     def read(self):
         raise RuntimeError("Bluetooth connected - no compatible video stream exposed")

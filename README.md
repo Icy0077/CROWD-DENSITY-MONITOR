@@ -261,7 +261,7 @@ The edge builds this payload (`edge/mqtt/publisher.py`). Values below are an exa
 | `capacity` | Capacity used for the percentage (default 100) |
 | `occupancy_percentage` | `occupancy / capacity × 100`, rounded |
 | `people_in` / `people_out` | IN and OUT crossings counted in the frame that produced this message |
-| `estimated_wait_minutes` | Edge sends 0; Lambda recomputes it as `round(occupancy / people_in)` (0 when `people_in` is 0) |
+| `estimated_wait_minutes` | Edge sends 0; Lambda recomputes it with Little's Law as `round(occupancy / arrivals_per_minute)`, where `arrivals_per_minute = people_in / (REPORTING_INTERVAL_SECONDS / 60)`; 0 when `people_in` is 0 |
 | `status` | `green` below 50%, `yellow` from 50% to 80%, `red` above 80% |
 
 The dashboard also accepts the older names `facility_id`, `inflow`, `outflow` and `wait_time`, and shows `inflow` and `outflow` in its UI. `docs/telemetry-schema.md` is the schema reference. Its example uses `library_01`, so treat `facility-1` as this project's live facility, not the schema doc's sample.
@@ -288,17 +288,19 @@ It uses real API telemetry. When the API fails, the last good reading is kept an
 
 ---
 
-## Input devices
+## Input Sources
 
 | Source | Status | Notes |
 |---|---|---|
-| Laptop webcam / local camera index | ✅ Implemented, hardware-dependent | `WebcamCapture(device_index=0)` via OpenCV |
-| USB camera | ✅ Implemented, hardware-dependent | Works as another OpenCV camera index |
-| Local video file | 🗺️ Planned | Dashboard dropdown only; not wired in the edge |
-| CCTV / RTSP | 🗺️ Planned | No RTSP code or credential handling exists |
-| Wi-Fi / IP camera | 🗺️ Planned | Same as above |
-| Phone camera | 🚧 Future-ready | See below |
-| Bluetooth | 🚧 Future-ready | See below |
+| Laptop webcam / local camera index | ✅ Implemented, hardware-dependent | OpenCV camera index, normally `0` |
+| USB camera | ✅ Implemented, hardware-dependent | Another OpenCV camera index, for example `1` |
+| Local video file | ✅ Implemented, hardware-dependent | Local `.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`, or `.mjpeg` path |
+| CCTV / RTSP | ✅ Implemented, configuration-dependent | Requires a reachable RTSP URL |
+| Wi-Fi / IP camera | ✅ Implemented, configuration-dependent | Requires a reachable RTSP/HTTP/MJPEG URL |
+| Phone camera | 🚧 Not video-ready | QR pairing exists, but WebRTC frame reception is not implemented |
+| Bluetooth | ⚠️ Control/discovery only | Bluetooth camera video is not supported |
+
+When `edge.main` is running, its local input-control server shares the same `InputDeviceManager` as the detection loop. A successful `POST /input/select` validates and opens the replacement source, probes a frame, then atomically swaps it into the running pipeline. A failed switch leaves the previous source in place.
 
 ### Phone QR pairing 🚧
 
@@ -309,12 +311,11 @@ Desktop: Generate QR  →  Phone scans  →  Pairing page  →  Camera permissio
 →  Start camera  →  Wi-Fi / WebRTC  →  Edge  →  YOLO + ByteTrack  →  AWS telemetry
 ```
 
-What exists: a dashboard panel (`PairingPanel.jsx`) that requests a pairing session, renders a short-lived QR code, shows a countdown and polls pairing status.
-What does not: the edge control server it calls, the phone pairing page, and any WebRTC media transport. None of these are in the repository.
+The dashboard requests a short-lived pairing session, renders a QR code, and the local edge server provides a camera-permission page. The WebRTC signaling/media receiver that would turn the browser stream into OpenCV frames is not implemented, so Phone is not reported as an active video source.
 
 ### Bluetooth
 
-Bluetooth is treated as discovery, pairing and control metadata only. It is not a high-bandwidth video transport. Live phone or camera video would travel over Wi-Fi, WebRTC or RTSP, depending on the device. The dashboard states this directly: Bluetooth "does not imply a video stream."
+Bluetooth is treated as discovery, pairing and control metadata only. Bluetooth camera video is not supported. Use USB, Webcam, Wi-Fi/RTSP, CCTV/RTSP, or Phone after a WebRTC receiver is added.
 
 ---
 

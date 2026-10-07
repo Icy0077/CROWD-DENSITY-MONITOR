@@ -27,19 +27,63 @@ function getTelemetryStatus(lastTelemetryAt, apiError, now) {
 }
 
 function ReportIntro({ data, telemetryStatus }) {
-  return <section className="facility-intro" aria-labelledby="facility-title"><div><p className="eyebrow">Facility 01</p><h1 id="facility-title">{data.facilityId || 'Awaiting live telemetry'}</h1><p className="intro-copy">A live reading of movement through the monitored space.</p></div><p className={`quiet-status status-${telemetryStatus}`}><span aria-hidden="true">●</span> {telemetryStatus}</p></section>
+  const summary = !data.lastUpdated
+    ? 'Live crowd metrics will appear when telemetry is available.'
+    : telemetryStatus === 'disconnected'
+      ? 'The dashboard cannot reach the telemetry service. Showing the last received reading.'
+      : telemetryStatus === 'stale'
+        ? 'Telemetry has not refreshed recently. Check the connection before acting on these readings.'
+        : data.status === 'red'
+          ? 'Crowd levels are near the configured capacity limit.'
+          : data.status === 'yellow'
+            ? 'Crowd levels are rising. Review the live flow and queue estimate.'
+            : data.status === 'green'
+              ? 'Crowd levels are within the configured capacity.'
+              : 'Live crowd metrics from your monitored space.'
+
+  const facilityName = data.facilityId === 'facility-1' ? 'Facility 1' : data.facilityId || 'Main Facility'
+
+  return <section className="facility-intro" aria-labelledby="facility-title"><div><p className="eyebrow">Real-time crowd intelligence</p><h1 id="facility-title">{facilityName}</h1><p className="intro-copy">{summary}</p></div><p className={`quiet-status status-${telemetryStatus}`}><span aria-hidden="true">●</span> {telemetryStatus}</p></section>
 }
 
-function OccupancyReading({ data }) {
+function FloatingNav() {
+  return <nav className="floating-nav" aria-label="Primary navigation"><a className="nav-active" href="#overview"><span>⌂</span>Overview</a><a href="#sources"><span>⌁</span>Sources</a></nav>
+}
+
+function EdgeVision({ occupancy, telemetryStatus }) {
+  return <section className="edge-vision" aria-labelledby="edge-vision-title"><div className="edge-vision-heading"><div><p className="eyebrow">Local processing</p><h2 id="edge-vision-title">Edge Vision</h2></div><span className={`edge-status edge-status-${telemetryStatus}`}><i /> {telemetryStatus === 'live' ? 'Telemetry receiving' : telemetryStatus}</span></div><div className="edge-vision-grid"><div><span className="edge-label">Camera processing</span><strong>On edge device</strong><small>Camera → YOLO/ByteTrack → telemetry</small></div><div><span className="edge-label">People detected</span><strong>{Number.isFinite(occupancy) ? occupancy : '—'}</strong><small>Aggregate count from the latest reading</small></div><div><span className="edge-label">Video stream</span><strong>Local only</strong><small>The dashboard does not receive raw camera frames.</small></div></div></section>
+}
+
+function PriorityReadings({ data }) {
   const utilization = Number.isFinite(data.utilization) ? Math.max(0, Math.min(100, data.utilization)) : null
-  return <section className="occupancy-section" aria-labelledby="occupancy-title"><div className="occupancy-copy"><p className="eyebrow" id="occupancy-title">Current occupancy</p><div className="occupancy-hero" aria-label={`${data.occupancy ?? 'unknown'} people inside out of ${data.capacity ?? 'unknown'} capacity`}><strong>{data.occupancy ?? '—'}</strong><span>/ {data.capacity ?? '—'}</span></div><p className="occupancy-caption">People inside</p><p className="occupancy-percent">{utilization === null ? 'Waiting for a live reading' : `${utilization}% of capacity`}</p></div><div className="occupancy-aside"><span>Latest reading</span><strong>{data.lastUpdated ? formatTime(data.lastUpdated) : '—'}</strong><span>Reporting interval · 5 seconds</span></div></section>
-}
-
-function CapacityReading({ data }) {
-  const value = Number.isFinite(data.utilization) ? Math.max(0, Math.min(100, data.utilization)) : 0
   const status = data.status || 'unknown'
-  const message = status === 'red' ? 'The space is approaching its configured limit.' : status === 'yellow' ? 'The space is filling; continue to monitor movement.' : status === 'green' ? 'Room remains comfortably below capacity.' : 'Capacity status will appear with live telemetry.'
-  return <section className="capacity-section" aria-labelledby="capacity-title"><div className="section-rule-heading"><p className="eyebrow" id="capacity-title">Capacity reading</p><h2>How full is the space?</h2></div><div className="capacity-reading"><strong>{Number.isFinite(data.utilization) ? `${value}%` : '—'}</strong><span>{data.occupancy ?? '—'} of {data.capacity ?? '—'} people</span></div><div className={`capacity-line capacity-${status}`}><span style={{ width: `${value}%` }} /></div><div className="capacity-footer"><span className={`status-note status-note-${status}`}><i />{status.toUpperCase()}</span><p>{message}</p></div></section>
+  const waitTime = Number.isFinite(data.estimatedWaitTime) ? data.estimatedWaitTime : null
+  const statusLabel = { green: 'Within limit', yellow: 'Monitor', red: 'Near limit', unknown: 'Status unavailable' }[status]
+
+  return <section className="priority-grid" aria-label="Current crowd metrics">
+    <article className="priority-card occupancy-priority" aria-labelledby="occupancy-title">
+      <p className="eyebrow" id="occupancy-title">People inside</p>
+      <div className="priority-value occupancy-priority-value" aria-label={`${data.occupancy ?? 'unknown'} people inside out of ${data.capacity ?? 'unknown'} capacity`}>
+        <strong>{data.occupancy ?? '—'}</strong><span> / {data.capacity ?? '—'}</span>
+      </div>
+      <p className="priority-caption">{utilization === null ? 'Waiting for a live reading' : `${utilization}% of available capacity`}</p>
+      <div className={`priority-capacity capacity-${status}`} role="progressbar" aria-label="Capacity used" aria-valuenow={utilization ?? undefined} aria-valuemin="0" aria-valuemax="100">
+        <span style={{ width: `${utilization ?? 0}%` }} />
+      </div>
+      <div className="priority-foot">
+        <span className={`status-note status-note-${status}`}><i />{statusLabel}</span>
+        <span>Updated {data.lastUpdated ? formatTime(data.lastUpdated) : '—'}</span>
+      </div>
+    </article>
+    <article className="priority-card queue-priority" aria-labelledby="queue-time-title">
+      <p className="eyebrow" id="queue-time-title">Estimated queue time</p>
+      <div className="priority-value queue-priority-value">
+        <strong>{waitTime === null ? '—' : waitTime}</strong><span>{waitTime === null ? 'No estimate' : 'min'}</span>
+      </div>
+      <p className="priority-caption">{waitTime === null ? 'Waiting for a queue estimate' : 'Estimated from the latest crowd telemetry'}</p>
+      <span className="queue-refresh">Refreshes with live readings</span>
+    </article>
+  </section>
 }
 
 export default function App() {
@@ -50,5 +94,5 @@ export default function App() {
   useEffect(() => { const timer = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(timer) }, [])
   useEffect(() => { fetchTelemetry(); const timer = setInterval(fetchTelemetry, POLL_INTERVAL); return () => clearInterval(timer) }, [fetchTelemetry])
   const showSkeleton = isLoading && data.lastUpdated === null && !apiError
-  return <div className="app-container"><Header currentTime={currentTime} lastTelemetryAt={data.lastUpdated} telemetryStatus={telemetryStatus} /><main className="report-main">{showSkeleton ? <><SkeletonCard /><SkeletonChartPanel /></> : <><ReportIntro data={data} telemetryStatus={telemetryStatus} /><OccupancyReading data={data} /><MovementField inflow={data.inflow} outflow={data.outflow} event={lastMovement} /><CapacityReading data={data} /><LiveActivity telemetry={data.telemetry} activityLog={data.activityLog} /><TrendChart points={data.chartPoints} labels={data.chartLabels} /><SystemStatus telemetryStatus={telemetryStatus} apiError={apiError} lastTelemetryAt={data.lastUpdated} currentTime={currentTime} onRetry={fetchTelemetry} /><InputSourceSettings /></>}</main><footer className="report-footer">CloudCrowd Analytics <span>·</span> aggregate telemetry, refreshed every 5 seconds</footer></div>
+  return <div className="app-container"><Header currentTime={currentTime} lastTelemetryAt={data.lastUpdated} telemetryStatus={telemetryStatus} /><FloatingNav /><main className="report-main" id="overview">{showSkeleton ? <><SkeletonCard /><SkeletonChartPanel /></> : <><ReportIntro data={data} telemetryStatus={telemetryStatus} /><PriorityReadings data={data} /><MovementField inflow={data.inflow} outflow={data.outflow} event={lastMovement} /><LiveActivity telemetry={data.telemetry} activityLog={data.activityLog} /><TrendChart points={data.chartPoints} labels={data.chartLabels} /><SystemStatus telemetryStatus={telemetryStatus} apiError={apiError} lastTelemetryAt={data.lastUpdated} currentTime={currentTime} onRetry={fetchTelemetry} /><details className="technical-details"><summary>Camera and edge processing details</summary><EdgeVision occupancy={data.occupancy} telemetryStatus={telemetryStatus} /></details><div id="sources"><InputSourceSettings /></div></>}</main><footer className="report-footer">CloudCrowd Analytics <span>·</span> aggregate telemetry, refreshed every 5 seconds</footer></div>
 }
