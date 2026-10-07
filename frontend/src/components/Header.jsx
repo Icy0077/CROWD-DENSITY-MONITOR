@@ -1,12 +1,10 @@
 function formatTime(date) {
   if (!date || Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase()
 }
 
-export default function Header({ connectionStatus, lastUpdated }) {
-  const statusLabel = {
-    connected: 'Connected', stale: 'Stale', connecting: 'Connecting', disconnected: 'Disconnected',
-  }[connectionStatus]
+export default function Header({ currentTime, lastTelemetryAt, telemetryStatus }) {
+  const statusLabel = { live: 'Live', stale: 'Stale', disconnected: 'Disconnected' }[telemetryStatus]
 
   return (
     <header className="dashboard-header masthead">
@@ -17,9 +15,10 @@ export default function Header({ connectionStatus, lastUpdated }) {
           <span className="brand-sub">A live room report</span>
         </div>
       </div>
-      <div className={`masthead-status ${connectionStatus}`}>
+      <div className={`masthead-status ${telemetryStatus}`}>
         <span>{statusLabel}</span>
-        <small>Telemetry timestamp {formatTime(lastUpdated)}</small>
+        <small>Current time {formatTime(currentTime)}</small>
+        <small>Last telemetry {formatTime(lastTelemetryAt)}</small>
       </div>
     </header>
   )
