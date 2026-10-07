@@ -6,6 +6,7 @@ import os
 import time
 
 import cv2
+import numpy as np
 
 from .mqtt.publisher import MqttPublisher, build_telemetry
 from .input import InputDeviceManager
@@ -61,6 +62,7 @@ class EdgePipeline:
 	def __init__(self, camera=None, detector=None, publisher=None, facility_id=None, line=None, reporting_interval_seconds=None, source=None, input_type=None, width=None, height=None):
 		self.camera = camera or create_input_source(source=source, input_type=input_type, width=width, height=height)
 		self.detector = detector if detector is not None else PersonDetector(line=line)
+		self._custom_line = line is not None or getattr(self.detector, "line", None) is not None
 		self.publisher = publisher if publisher is not None else MqttPublisher()
 		self.facility_id = facility_id or os.getenv("FACILITY_ID", "facility-1")
 		interval = reporting_interval_seconds
@@ -77,15 +79,22 @@ class EdgePipeline:
 			self.facility_id,
 			self.reporting_interval_seconds,
 		)
+		last_source = None
+		last_source_size = None
 		try:
 			with self.camera as camera:
 				while True:
 					ok, frame = camera.read()
 					if not ok:
 						break
-					if getattr(self.detector, "line", None) is None:
-						frame_height, frame_width = frame.shape[:2]
-						self.detector.line = _line_for_frame(frame_width, frame_height)
+					source_size = (frame.shape[1], frame.shape[0])
+					active_source = getattr(camera, "source", camera)
+					if not self._custom_line and (
+						active_source is not last_source or source_size != last_source_size
+					):
+						self.detector.line = _line_for_frame(*source_size)
+					last_source = active_source
+					last_source_size = source_size
 
 					detections = self.detector.detect(frame)
 					reporter.observe(detections)
@@ -123,7 +132,7 @@ def _parse_line(value):
 def _line_for_frame(width, height, line=None):
 	if line is not None:
 		return line
-	line_x = width / 2
+	line_x = width // 2
 	return ((line_x, 0), (line_x, height - 1))
 
 
@@ -249,16 +258,61 @@ def _screen_dimensions():
 
 
 def _fit_frame_to_screen(frame, screen_dimensions):
-	maximum_width = max(1, screen_dimensions[0] - 80)
-	maximum_height = max(1, screen_dimensions[1] - 140)
-	scale = min(1.0, maximum_width / frame.shape[1], maximum_height / frame.shape[0])
-	if scale == 1.0:
-		return frame
-	display_size = (
-		max(1, round(frame.shape[1] * scale)),
-		max(1, round(frame.shape[0] * scale)),
+	geometry = _display_geometry(frame.shape[:2], screen_dimensions)
+	display_width = geometry["display_size"][0]
+	display_height = geometry["display_size"][1]
+	canvas_width = geometry["canvas_size"][0]
+	canvas_height = geometry["canvas_size"][1]
+	resized = frame if geometry["scale"] == 1 else cv2.resize(
+		frame,
+		(display_width, display_height),
+		interpolation=cv2.INTER_AREA,
 	)
-	return cv2.resize(frame, display_size, interpolation=cv2.INTER_AREA)
+	canvas = np.zeros((canvas_height, canvas_width, frame.shape[2]), dtype=frame.dtype)
+	offset_x, offset_y = geometry["offset"]
+	canvas[offset_y:offset_y + display_height, offset_x:offset_x + display_width] = resized
+	return canvas
+
+
+def _display_geometry(frame_shape, screen_dimensions):
+	frame_height, frame_width = frame_shape
+	canvas_width = max(1, screen_dimensions[0] - 80)
+	canvas_height = max(1, screen_dimensions[1] - 140)
+	scale = min(1.0, canvas_width / frame_width, canvas_height / frame_height)
+	display_width = max(1, round(frame_width * scale))
+	display_height = max(1, round(frame_height * scale))
+	offset = ((canvas_width - display_width) // 2, (canvas_height - display_height) // 2)
+	return {
+		"source_size": (frame_width, frame_height),
+		"display_size": (display_width, display_height),
+		"canvas_size": (canvas_width, canvas_height),
+		"scale": scale,
+		"offset": offset,
+		"source_center_x": frame_width // 2,
+		"display_center_x": offset[0] + int((frame_width // 2) * scale),
+	}
+
+
+def _debug_display_geometry(frame_shape, screen_dimensions):
+	if os.getenv("EDGE_DEBUG_DISPLAY", "0").lower() not in {"1", "true", "yes"}:
+		return
+	geometry = _display_geometry(frame_shape, screen_dimensions)
+	print(
+		"SOURCE: "
+		f"{geometry['source_size'][0]}x{geometry['source_size'][1]} "
+		"DISPLAY: "
+		f"{geometry['display_size'][0]}x{geometry['display_size'][1]} "
+		"CANVAS: "
+		f"{geometry['canvas_size'][0]}x{geometry['canvas_size'][1]} "
+		"SCALE: "
+		f"{geometry['scale']:.3f} "
+		"OFFSET: "
+		f"{geometry['offset'][0]},{geometry['offset'][1]} "
+		"CENTER LINE SOURCE X: "
+		f"{geometry['source_center_x']} "
+		"CENTER LINE DISPLAY X: "
+		f"{geometry['display_center_x']}"
+	)
 
 
 def run_visual_demo(
@@ -296,6 +350,8 @@ def run_visual_demo(
 			print(f"Input control API unavailable: {exc}")
 	screen_dimensions = _screen_dimensions()
 	detector = None
+	last_source_size = None
+	last_source = None
 	privacy_enabled = True
 	total_in = 0
 	total_out = 0
@@ -336,6 +392,10 @@ def run_visual_demo(
 					break
 				failed_reads = 0
 
+				source_size = (frame.shape[1], frame.shape[0])
+				active_source = getattr(capture, "source", capture)
+				source_changed = active_source is not last_source
+				size_changed = source_size != last_source_size
 				if detector is None:
 					height, width = frame.shape[:2]
 					counting_line = _line_for_frame(width, height, line)
@@ -346,6 +406,14 @@ def run_visual_demo(
 						line=counting_line,
 						in_side=in_side,
 					)
+				elif line is None and (source_changed or size_changed):
+					# The input can be switched at runtime. Keep the default line
+					# centered in the new source frame; explicit custom lines are kept.
+					detector.line = _line_for_frame(frame.shape[1], frame.shape[0])
+				if source_changed or size_changed:
+					last_source = active_source
+					last_source_size = source_size
+					_debug_display_geometry(frame.shape[:2], screen_dimensions)
 
 				detections = detector.detect(frame)
 				display_frame = detector.processed_frame if privacy_enabled else frame.copy()

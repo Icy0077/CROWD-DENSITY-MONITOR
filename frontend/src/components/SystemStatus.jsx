@@ -10,6 +10,11 @@ export default function SystemStatus({ telemetryStatus, apiError, lastTelemetryA
     live: 'Live', stale: 'Stale', disconnected: 'Disconnected',
   }[telemetryStatus]
 
+  const isRecovering = telemetryStatus === 'live'
+  const staleSummary = telemetryStatus === 'stale' && !apiError
+    ? 'Telemetry is stale. Values below are last known and should not be treated as current.'
+    : null
+
   return (
     <section className="system-section" aria-label="System status">
       <div className="section-heading">
@@ -33,13 +38,16 @@ export default function SystemStatus({ telemetryStatus, apiError, lastTelemetryA
             <span className="system-value">{formatTime(lastTelemetryAt)}</span>
           </div>
           <div className="system-row">
-            <span className="system-label">Refresh Interval</span>
+            <span className="system-label">Refresh interval</span>
             <span className="system-value">5 seconds</span>
           </div>
         </div>
 
-        {telemetryStatus === 'stale' && !apiError && (
-          <div className="system-error"><div className="system-error-text"><strong>No new telemetry</strong><p>API is reachable, but telemetry has not updated within the freshness window.</p></div></div>
+        {staleSummary && (
+          <div className="system-error"><div className="system-error-text"><strong>Telemetry stale</strong><p>{staleSummary}</p></div></div>
+        )}
+        {isRecovering && (
+          <div className="system-error success-state"><div className="system-error-text"><strong>Telemetry recovered</strong><p>Fresh readings are updating normally again.</p></div></div>
         )}
         {apiError && (
           <div className="system-error">

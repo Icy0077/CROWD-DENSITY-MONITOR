@@ -74,7 +74,7 @@ def create_input_source(source=None, input_type=None, width=None, height=None, w
         return VideoFileSource(validate_video_path(configured_source))
 
     if configured_type in {"rtsp", "cctv"}:
-        return RtspSource(validate_source_url(configured_source, ("rtsp", "rtsps")), width=width, height=height)
+        return RtspSource(validate_source_url(configured_source, ("rtsp", "rtsps")), width=width, height=height, low_latency=True)
 
     if configured_type in {"wifi", "ip", "mjpeg"}:
         return WifiCameraSource(validate_source_url(configured_source), width=width, height=height)
@@ -87,7 +87,7 @@ def create_input_source(source=None, input_type=None, width=None, height=None, w
         return BluetoothSource()
 
     if source_text.lower().startswith(("rtsp://", "rtsps://")):
-        return RtspSource(validate_source_url(configured_source, ("rtsp", "rtsps")), width=width, height=height)
+        return RtspSource(validate_source_url(configured_source, ("rtsp", "rtsps")), width=width, height=height, low_latency=True)
 
     if source_text.isdigit() or (source_text.startswith("-") and source_text[1:].isdigit()):
         capture_class = webcam_capture_cls

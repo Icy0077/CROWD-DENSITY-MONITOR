@@ -6,7 +6,8 @@ from edge import main as edge_main
 
 
 class FakeFrame:
-	shape = (100, 100, 3)
+	def __init__(self, shape=(100, 100, 3)):
+		self.shape = shape
 
 	def copy(self):
 		return self
@@ -35,9 +36,11 @@ class FakeDetector:
 		self.occupancy = 0
 		self.line = ((50, 0), (50, 99))
 		self.processed_frame = None
+		self.lines_seen = []
 
 	def detect(self, frame):
 		self.processed_frame = frame
+		self.lines_seen.append(self.line)
 		crossing = next(self.events)
 		if crossing == "IN":
 			self.occupancy += 1
@@ -134,6 +137,82 @@ def test_edge_pipeline_defaults_to_facility_one_and_sixty_second_interval(monkey
 
 	assert pipeline.facility_id == "facility-1"
 	assert pipeline.reporting_interval_seconds == 60
+
+
+def test_edge_pipeline_centers_default_line_for_each_source_resolution():
+	detector = FakeDetector(("IN", "OUT"))
+	detector.line = None
+	pipeline = edge_main.EdgePipeline(
+		camera=FakeCamera([
+			FakeFrame((480, 640, 3)),
+			FakeFrame((720, 1280, 3)),
+		]),
+		detector=detector,
+		publisher=FakePublisher(),
+	)
+
+	assert len(list(pipeline.run())) == 2
+	assert detector.lines_seen == [
+		((320, 0), (320, 479)),
+		((640, 0), (640, 719)),
+	]
+	assert detector.occupancy == 0
+
+
+def test_visual_demo_draws_the_source_line_used_by_detection(monkeypatch, capsys):
+	frames = [
+		FakeFrame((480, 640, 3)),
+		FakeFrame((480, 640, 3)),
+		FakeFrame((720, 1280, 3)),
+	]
+	first_source = object()
+	second_source = object()
+
+	class SwitchingFakeCamera(FakeCamera):
+		def __init__(self, camera_frames):
+			super().__init__(camera_frames)
+			self.sources = iter((first_source, second_source, second_source))
+			self.source = None
+
+		def read(self):
+			ok, frame = super().read()
+			if ok:
+				self.source = next(self.sources)
+			return ok, frame
+
+	camera = SwitchingFakeCamera(frames)
+	detector = FakeDetector(("IN", "OUT", "IN"))
+	detector.line = None
+	publisher = FakePublisher()
+	prepare_visual_demo(monkeypatch, frames, ("IN", "OUT", "IN"), publisher)
+	monkeypatch.setenv("EDGE_CONTROL_ENABLED", "0")
+	monkeypatch.setenv("EDGE_DEBUG_DISPLAY", "1")
+	monkeypatch.setattr(edge_main, "InputDeviceManager", lambda **_kwargs: camera)
+	monkeypatch.setattr(
+		edge_main,
+		"PersonDetector",
+		lambda **kwargs: (setattr(detector, "line", kwargs["line"]) or detector),
+	)
+	drawn_lines = []
+	monkeypatch.setattr(
+		edge_main.cv2,
+		"line",
+		lambda _frame, start, end, *_args: drawn_lines.append((start, end)),
+	)
+	monkeypatch.setattr(edge_main, "_draw_side_label", lambda *_args: None)
+
+	edge_main.run_visual_demo()
+
+	expected_lines = [
+		((320, 0), (320, 479)),
+		((320, 0), (320, 479)),
+		((640, 0), (640, 719)),
+	]
+	assert detector.lines_seen == expected_lines
+	assert drawn_lines == expected_lines
+	assert detector.occupancy == 1
+	debug_lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("SOURCE:")]
+	assert len(debug_lines) == 3
 
 
 def test_privacy_defaults_on_and_keyboard_controls_toggle_visual_state():

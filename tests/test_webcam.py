@@ -1,6 +1,6 @@
 import numpy as np
 
-from edge.main import _fit_frame_to_screen, _line_for_frame
+from edge.main import _display_geometry, _fit_frame_to_screen, _line_for_frame
 from edge.vision import webcam as webcam_module
 
 
@@ -101,10 +101,34 @@ def test_display_fit_preserves_aspect_ratio_without_upscaling():
 	frame = np.zeros((720, 1280, 3), dtype=np.uint8)
 
 	display_frame = _fit_frame_to_screen(frame, (1280, 800))
+	geometry = _display_geometry(frame.shape[:2], (1280, 800))
 
-	assert display_frame.shape[1] <= 1200
-	assert display_frame.shape[0] <= 660
-	assert abs(display_frame.shape[1] / display_frame.shape[0] - 1280 / 720) < 0.002
+	assert display_frame.shape[1:] == (1200, 3)
+	assert display_frame.shape[0] == 660
+	assert geometry["display_size"] == (1173, 660)
+	assert geometry["offset"] == (13, 0)
+	assert abs(geometry["display_size"][0] / geometry["display_size"][1] - 1280 / 720) < 0.002
+	assert geometry["display_center_x"] == 599
+	assert abs(geometry["display_center_x"] - (geometry["offset"][0] + geometry["display_size"][0] / 2)) <= 1
+
+
+def test_display_fit_preserves_source_ratio_and_video_center_for_common_resolutions():
+	for width, height in ((640, 480), (1280, 720), (1920, 1080), (1080, 1920)):
+		frame = np.full((height, width, 3), 127, dtype=np.uint8)
+		geometry = _display_geometry((height, width), (1280, 800))
+		canvas = _fit_frame_to_screen(frame, (1280, 800))
+		display_width, display_height = geometry["display_size"]
+		offset_x, offset_y = geometry["offset"]
+		displayed_frame = canvas[offset_y:offset_y + display_height, offset_x:offset_x + display_width]
+		source_center = width // 2
+
+		assert displayed_frame.shape[:2] == (display_height, display_width)
+		assert np.all(displayed_frame == 127)
+		assert geometry["source_center_x"] == source_center
+		assert geometry["display_center_x"] == geometry["offset"][0] + int(source_center * geometry["scale"])
+		assert abs(display_width / display_height - width / height) < 0.002
+		assert _line_for_frame(width, height) == ((source_center, 0), (source_center, height - 1))
+		assert geometry["display_center_x"] == offset_x + int(source_center * geometry["scale"])
 
 
 def test_counting_line_spans_actual_frame_height():

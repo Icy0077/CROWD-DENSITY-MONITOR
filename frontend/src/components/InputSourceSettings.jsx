@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import PairingPanel from './PairingPanel'
 
 const choices = [
   ['webcam', 'Webcam'], ['usb', 'USB Camera'], ['wifi', 'Wi-Fi Camera'], ['rtsp', 'CCTV / RTSP'],
-  ['phone', 'Phone'], ['bluetooth', 'Bluetooth — control/discovery only'], ['file', 'Local Video File'],
+  ['phone', 'Phone'], ['file', 'Local Video File'],
 ]
 
 function sourceHint(type) {
@@ -18,13 +18,16 @@ export default function InputSourceSettings() {
   const [source, setSource] = useState('0')
   const [cameraChoice, setCameraChoice] = useState(null)
   const [status, setStatus] = useState('CONNECTING'); const [devices, setDevices] = useState([]); const [message, setMessage] = useState('')
+  const selectionRequest = useRef(0)
   const base = import.meta.env.VITE_EDGE_CONTROL_URL || 'http://127.0.0.1:8000'
 
   const applyStatus = (value, syncSource = true) => {
     if (syncSource) {
-      setSelected(value.type || 'webcam')
-      setSource(value.source || (value.type === 'webcam' ? '0' : ''))
-      if (value.source !== undefined && value.source !== null) setCameraChoice(String(value.source))
+      const sourceType = value.type || 'webcam'
+      setSelected(sourceType)
+      setSource(value.source || (sourceType === 'webcam' ? '0' : ''))
+      if ((sourceType === 'webcam' || sourceType === 'usb') && value.source !== undefined && value.source !== null) setCameraChoice(String(value.source))
+      else if (sourceType !== 'webcam' && sourceType !== 'usb') setCameraChoice(null)
     }
     setStatus(value.state || (value.connected ? 'CONNECTED' : 'AVAILABLE'))
     setMessage(value.message || '')
@@ -36,6 +39,17 @@ export default function InputSourceSettings() {
     return cameras.find(camera => Number(camera.index) !== Number(cameras[0]?.index))?.index ?? null
   }
 
+  const sourceStatus = (type) => {
+    if (type === 'phone') return 'Unavailable'
+    if (selected === type) return status === 'ACTIVE' ? 'Active' : status
+    return 'Ready'
+  }
+
+  const validCameraChoice = () => {
+    const value = Number(cameraChoice)
+    return Number.isInteger(value) && value >= 0 ? cameraChoice : null
+  }
+
   useEffect(() => {
     fetch(`${base}/input/status`).then(r => r.json()).then(applyStatus).catch(() => setStatus('UNAVAILABLE'))
     fetch(`${base}/input/devices`).then(r => r.json()).then(value => setDevices(value.local_cameras || [])).catch(() => {})
@@ -45,6 +59,7 @@ export default function InputSourceSettings() {
 
   const select = async (event, commit = true, sourceOverride = undefined) => {
     const inputType = event.target.value
+    const requestId = ++selectionRequest.current
     if (inputType === 'bluetooth') {
       setSelected('bluetooth'); setStatus('UNSUPPORTED'); setMessage('Bluetooth video streaming is not supported. Use USB, Wi-Fi/RTSP, CCTV/RTSP, or Phone.')
       return
@@ -54,25 +69,38 @@ export default function InputSourceSettings() {
       return
     }
     if (!commit && inputType !== 'webcam' && inputType !== 'usb') {
-      setSelected(inputType); setSource(''); setStatus('READY'); setMessage(`Enter the ${sourceHint(inputType).toLowerCase()} below, then press Tab.`); return
+      setSelected(inputType); setSource(''); setCameraChoice(null); setStatus('READY'); setMessage(`Enter the ${sourceHint(inputType).toLowerCase()} below, then press Tab.`); return
     }
-    const requestedSource = sourceOverride ?? (inputType === 'webcam' || inputType === 'usb' ? (cameraChoice ?? cameraSource(inputType)) : source)
+    setSelected(inputType)
+    setStatus('CONNECTING')
+    setMessage('Switching input source…')
+    const requestedSource = sourceOverride ?? (inputType === 'webcam'
+      ? (validCameraChoice() ?? cameraSource('webcam') ?? 0)
+      : inputType === 'usb'
+        ? (validCameraChoice() ?? cameraSource('usb'))
+        : source)
     if ((inputType === 'webcam' || inputType === 'usb') && requestedSource === null) {
       setStatus('ERROR'); setMessage('No additional local camera was detected. Connect the camera and try again.'); return
     }
     try {
       const response = await fetch(`${base}/input/select`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ input_type: inputType, source: requestedSource ?? undefined }) })
       const value = await response.json().catch(() => ({}))
+      if (requestId !== selectionRequest.current) return
       if (!response.ok) {
         setStatus('ERROR'); setMessage(value.error || 'Camera source was not changed'); return
       }
       applyStatus(value); setMessage('Camera source switched successfully')
-    } catch { setStatus('ERROR'); setMessage('Camera source was not changed: the edge device is unavailable.') }
+    } catch {
+      if (requestId === selectionRequest.current) {
+        setStatus('ERROR')
+        setMessage('Camera source was not changed: the edge device is unavailable.')
+      }
+    }
   }
 
   return <section className="card input-source-card" aria-labelledby="input-source-title">
     <div className="section-heading"><div><p className="eyebrow">Local edge control</p><h2 id="input-source-title" className="section-title">Input Source</h2></div><span className="input-status">● {status}</span></div>
-    <div className="source-pills" role="group" aria-label="Input source"><select id="input-source-select" value={selected} onChange={event => select(event, event.target.value === 'webcam' || event.target.value === 'usb')} aria-label="Input source">{choices.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>{choices.map(([value, label]) => <button type="button" key={value} className={selected === value ? 'source-pill source-pill-active' : 'source-pill'} onClick={() => select({ target: { value } }, value === 'webcam' || value === 'usb')}>{label.replace(' Camera', '')}</button>)}</div>
+    <div className="source-pills" role="group" aria-label="Input source"><select id="input-source-select" value={selected} onChange={event => select(event, event.target.value === 'webcam' || event.target.value === 'usb')} aria-label="Input source">{choices.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>{choices.map(([value, label]) => <button type="button" key={value} className={selected === value ? 'source-pill source-pill-active' : 'source-pill'} onClick={() => select({ target: { value } }, value === 'webcam' || value === 'usb')}><span>{label}</span><small>{sourceStatus(value)}</small></button>)}</div>
     {selected === 'webcam' || selected === 'usb' ? <div className="camera-choices"><span className="input-source-label">{selected === 'webcam' ? 'Choose a local camera' : 'Choose a USB camera'}</span>{devices.length ? <div className="camera-choice-list">{devices.map((device, index) => <button type="button" key={`${device.index}-${index}`} className={String(cameraChoice) === String(device.index) ? 'camera-choice camera-choice-active' : 'camera-choice'} onClick={() => { setCameraChoice(String(device.index)); select({ target: { value: selected } }, true, device.index) }}><span className="camera-choice-icon">◉</span><span>{device.label || `Local camera ${index + 1}`}</span></button>)}</div> : <p className="input-source-note">No local cameras detected. Connect a camera and refresh.</p>}</div> : null}
     {selected !== 'phone' && selected !== 'bluetooth' && selected !== 'webcam' && selected !== 'usb' ? <><label className="input-source-label" htmlFor="input-source-value">{sourceHint(selected)}</label><input id="input-source-value" type="text" className="input-source-value" value={source} onChange={event => setSource(event.target.value)} placeholder={selected === 'file' ? 'C:\\video\\crowd.mp4' : 'rtsp://..., or http://...'} /><button type="button" className="source-connect-button" onClick={() => select({ target: { value: selected } })}>Connect source</button></> : null}
     {selected === 'bluetooth' ? <p className="input-source-note">Bluetooth video streaming is not supported. Use USB, Wi-Fi/RTSP, CCTV/RTSP, or Phone.</p> : null}
