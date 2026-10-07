@@ -42,4 +42,4 @@ Status values are lowercase and should be treated as an enum. This schema docume
 
 ## Reporting interval and edge input
 
-The edge input uses the transport fields `facility_id`, `timestamp`, `occupancy`, `inflow`, and `outflow`. Lambda maps these to the response fields above and obtains `capacity` from `FACILITY_CAPACITY`. `REPORTING_INTERVAL_SECONDS` defines the duration represented by each `inflow` and `outflow` count. It is configuration, not a fabricated telemetry field, and must match the edge publisher and Lambda deployment.
+The edge input uses the transport fields `facility_id`, `timestamp`, `occupancy`, `inflow`, and `outflow`. Lambda maps these to the response fields above and obtains `capacity` from `FACILITY_CAPACITY`. The edge MQTT message also includes `reporting_interval_seconds`, the measured duration represented by each `inflow` and `outflow` count. This is transport metadata, not part of the API response; `REPORTING_INTERVAL_SECONDS` remains a fallback for older messages without it.

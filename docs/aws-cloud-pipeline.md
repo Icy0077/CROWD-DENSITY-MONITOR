@@ -20,7 +20,7 @@ MQTT_QOS=1
 
 Never store certificate contents, private keys, or static AWS access keys in the repository. Use the AWS CLI credential chain (for example, an approved IAM Identity Center profile) for deployment and smoke-test AWS SDK calls.
 
-The stack requires `FacilityCapacity`, the facility's configured capacity, and `ReportingIntervalSeconds`, the duration represented by edge `inflow`/`outflow` values. `EdgePipeline` aggregates crossings over this same configured duration before publishing the unchanged five-field shape (`facility_id`, `timestamp`, `occupancy`, `inflow`, `outflow`); it flushes the final partial interval when the input stream ends. Lambda maps this to the existing nine-field API/state schema, calculates occupancy percentage and status, and applies Little's Law using arrivals per minute derived from the configured interval. Keep edge `REPORTING_INTERVAL_SECONDS` equal to the stack parameter.
+The stack requires `FacilityCapacity`, the facility's configured capacity, and `ReportingIntervalSeconds`, the nominal edge publishing interval. `EdgePipeline` aggregates crossings and publishes the measured duration of each batch as `reporting_interval_seconds`, including the final partial interval when the input stream ends. Lambda maps the message to the existing API/state schema, calculates occupancy percentage and status, and applies Little's Law using arrivals per minute derived from that measured duration. The configured interval is retained as a fallback for older edge messages that omit the duration.
 
 ## Package and deploy
 

@@ -237,7 +237,7 @@ This is a design direction, not a claim of anonymization or legal compliance.
 
 ## Live telemetry
 
-The edge builds this payload (`edge/mqtt/publisher.py`). Values below are an example:
+The API returns this canonical payload. The edge MQTT message uses legacy transport names (`facility_id`, `inflow`, and `outflow`) and includes the measured batch duration as `reporting_interval_seconds`.
 
 ```json
 {
@@ -260,8 +260,8 @@ The edge builds this payload (`edge/mqtt/publisher.py`). Values below are an exa
 | `occupancy` | Current tracked occupancy |
 | `capacity` | Capacity used for the percentage (default 100) |
 | `occupancy_percentage` | `occupancy / capacity × 100`, rounded |
-| `people_in` / `people_out` | IN and OUT crossings counted in the frame that produced this message |
-| `estimated_wait_minutes` | Edge sends 0; Lambda recomputes it with Little's Law as `round(occupancy / arrivals_per_minute)`, where `arrivals_per_minute = people_in / (REPORTING_INTERVAL_SECONDS / 60)`; 0 when `people_in` is 0 |
+| `people_in` / `people_out` | IN and OUT crossings counted during this telemetry batch |
+| `estimated_wait_minutes` | Lambda calculates this with Little's Law as `round(occupancy / arrivals_per_minute)`, where `arrivals_per_minute` is the edge batch's `people_in` count divided by its measured duration in minutes. `REPORTING_INTERVAL_SECONDS` is the fallback for older senders. |
 | `status` | `green` below 50%, `yellow` from 50% to 80%, `red` above 80% |
 
 The dashboard also accepts the older names `facility_id`, `inflow`, `outflow` and `wait_time`, and shows `inflow` and `outflow` in its UI. `docs/telemetry-schema.md` is the schema reference. Its example uses `library_01`, so treat `facility-1` as this project's live facility, not the schema doc's sample.

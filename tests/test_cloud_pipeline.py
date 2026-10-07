@@ -120,6 +120,26 @@ def test_edge_telemetry_is_normalized_using_deployment_configuration(monkeypatch
 	assert payload["estimated_wait_minutes"] == 10
 
 
+def test_edge_telemetry_uses_its_measured_reporting_interval(monkeypatch):
+	monkeypatch.setenv("FACILITY_CAPACITY", "100")
+	monkeypatch.setenv("REPORTING_INTERVAL_SECONDS", "60")
+	store, _ = make_store()
+	edge_message = {
+		"facility_id": "library_01",
+		"timestamp": "2026-09-17T10:30:00Z",
+		"occupancy": 42,
+		"inflow": 8,
+		"outflow": 5,
+		"reporting_interval_seconds": 120,
+	}
+
+	response = lambda_handler(edge_message, state_store=store)
+
+	assert response["statusCode"] == 200
+	payload = json.loads(response["body"])["telemetry"]
+	assert payload["estimated_wait_minutes"] == 10
+
+
 def test_edge_telemetry_requires_configured_facility_capacity(monkeypatch):
 	monkeypatch.delenv("FACILITY_CAPACITY", raising=False)
 	edge_message = {
@@ -141,6 +161,7 @@ def test_edge_telemetry_requires_configured_facility_capacity(monkeypatch):
 		("occupancy", -1),
 		("occupancy_over_capacity", 101),
 		("people_in", 1.5),
+		("reporting_interval_seconds", 0),
 		("timestamp", "not-a-timestamp"),
 		("status", "purple"),
 		("occupancy_percentage", 99),

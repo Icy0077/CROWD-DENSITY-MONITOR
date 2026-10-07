@@ -280,6 +280,7 @@ img {
 
 .intro-copy {
   max-width: 480px;
+  min-height: calc(2 * 1.55em);
   margin: 14px 0 0;
   color: var(--muted);
   font-size: 15px;
@@ -454,6 +455,11 @@ img {
   margin: 0;
   font: 500 clamp(28px, 3vw, 42px) / 1.08 var(--display);
   letter-spacing: -0.05em;
+}
+
+.section-rule-heading {
+  flex-direction: column;
+  align-items: flex-start;
 }
 
 .movement-layout {
@@ -679,6 +685,7 @@ img {
 }
 
 .movement-note {
+  min-height: 1.55em;
   margin: 12px 0 0;
   color: var(--muted);
   font-size: 12px;

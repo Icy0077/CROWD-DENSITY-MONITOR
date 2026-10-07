@@ -116,8 +116,20 @@ def test_pipeline_publishes_only_aggregate_telemetry(monkeypatch, tmp_path):
 
 	assert publisher.closed
 	assert len(publisher.messages) == 1
-	assert set(publisher.messages[0]) == {"facility_id", "timestamp", "inflow", "outflow", "occupancy"}
-	assert all(isinstance(value, (str, int)) for value in publisher.messages[0].values())
+	assert set(publisher.messages[0]) == {
+		"facility_id",
+		"timestamp",
+		"inflow",
+		"outflow",
+		"occupancy",
+		"reporting_interval_seconds",
+	}
+	assert all(
+		isinstance(value, (str, int))
+		for key, value in publisher.messages[0].items()
+		if key != "reporting_interval_seconds"
+	)
+	assert publisher.messages[0]["reporting_interval_seconds"] > 0
 	assert np.array_equal(frame, original)
 	assert not np.array_equal(detector.processed_frame, original)
 	assert list(tmp_path.iterdir()) == []

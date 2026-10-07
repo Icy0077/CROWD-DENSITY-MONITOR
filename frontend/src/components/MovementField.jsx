@@ -80,6 +80,6 @@ export default function MovementField({ occupancy, inflow, outflow, event }) {
       </div>
       <div className="flow-counter flow-out"><span>OUT</span><div className="flow-count-line"><strong>{outflow ?? '—'}</strong><FlowPeople count={numericCount(outflow)} direction="out" /></div><small>latest interval</small></div>
     </div>
-    <p className="movement-note">Stickmen animate only when a new telemetry timestamp reports real movement.</p>
+    <p className="movement-note" aria-hidden="true" />
   </section>
 }

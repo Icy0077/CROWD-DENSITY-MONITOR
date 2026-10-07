@@ -85,7 +85,7 @@ def test_visual_demo_publishes_aggregated_counts_per_interval(monkeypatch, capsy
 	publisher = FakePublisher()
 	frames = [FakeFrame() for _ in range(4)]
 	detector = prepare_visual_demo(monkeypatch, frames, ("IN", "OUT", "IN", "OUT"), publisher)
-	ticks = iter((0, 4, 8, 11, 13))
+	ticks = iter((0, 4, 8, 11, 13, 15))
 	monkeypatch.setattr(edge_main.time, "monotonic", lambda: next(ticks))
 
 	edge_main.run_visual_demo()
@@ -98,15 +98,24 @@ def test_visual_demo_publishes_aggregated_counts_per_interval(monkeypatch, capsy
 		"occupancy": 1,
 		"inflow": 2,
 		"outflow": 1,
+		"reporting_interval_seconds": 11,
 	}
 	assert {key: value for key, value in final.items() if key != "timestamp"} == {
 		"facility_id": "facility-1",
 		"occupancy": 0,
 		"inflow": 0,
 		"outflow": 1,
+		"reporting_interval_seconds": 4,
 	}
 	for message in publisher.messages:
-		assert set(message) == {"facility_id", "timestamp", "occupancy", "inflow", "outflow"}
+		assert set(message) == {
+			"facility_id",
+			"timestamp",
+			"occupancy",
+			"inflow",
+			"outflow",
+			"reporting_interval_seconds",
+		}
 		datetime.fromisoformat(message["timestamp"].replace("Z", "+00:00"))
 	log_lines = capsys.readouterr().out.splitlines()
 	assert len(log_lines) == 2

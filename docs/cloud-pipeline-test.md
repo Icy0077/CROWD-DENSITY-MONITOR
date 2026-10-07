@@ -52,7 +52,7 @@ Stored item and API response:
 }
 ```
 
-The handler recalculates `estimated_wait_minutes` using Little's Law, `W = L / λ`. `people_in` is interpreted as arrivals during a 60-second reporting interval by default, so `λ = 8 arrivals/minute` and `W = 42 people / (8 arrivals/minute) = 5.25 minutes`, rounded to `5`. The calculation accepts an explicit `reporting_interval_seconds` argument so other reporting windows are converted into arrivals per minute before calculating wait time.
+The handler recalculates `estimated_wait_minutes` using Little's Law, `W = L / λ`. `people_in` is interpreted as arrivals during the batch's measured `reporting_interval_seconds` (or the configured interval for older messages), so `λ = 8 arrivals/minute` for the 60-second example and `W = 42 people / (8 arrivals/minute) = 5.25 minutes`, rounded to `5`.
 
 Invalid payload checks returned HTTP `400` with `accepted: false` and did not create additional DynamoDB writes for:
 

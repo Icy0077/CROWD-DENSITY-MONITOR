@@ -64,7 +64,7 @@ def _normalize_telemetry(telemetry):
 
 	normalized = dict(telemetry)
 	edge_fields = {"facility_id", "timestamp", "occupancy", "inflow", "outflow"}
-	if set(normalized) == edge_fields:
+	if set(normalized) in (edge_fields, edge_fields | {"reporting_interval_seconds"}):
 		try:
 			capacity = int(os.environ["FACILITY_CAPACITY"])
 		except (KeyError, TypeError, ValueError) as error:
@@ -94,6 +94,7 @@ def _normalize_telemetry(telemetry):
 			normalized[field] = normalized[legacy_field]
 
 	allowed_fields = set(REQUIRED_FIELDS) | set(legacy_fields.values())
+	allowed_fields.add("reporting_interval_seconds")
 	unexpected = sorted(set(normalized) - allowed_fields)
 	if unexpected:
 		raise ValueError(f"Unexpected telemetry fields: {', '.join(unexpected)}")
@@ -134,8 +135,17 @@ def _normalize_telemetry(telemetry):
 		raise ValueError("status must be green, yellow, or red")
 	if normalized["status"] != _status_for_percentage(computed_percentage):
 		raise ValueError("status does not match occupancy_percentage")
+	if "reporting_interval_seconds" in normalized:
+		interval = normalized["reporting_interval_seconds"]
+		if (
+			isinstance(interval, bool)
+			or not isinstance(interval, Real)
+			or not math.isfinite(float(interval))
+			or interval <= 0
+		):
+			raise ValueError("reporting_interval_seconds must be a positive finite number")
 
-	return {
+	result = {
 		"location_id": normalized["location_id"],
 		"timestamp": _normalize_timestamp(normalized["timestamp"]),
 		"occupancy": normalized["occupancy"],
@@ -146,6 +156,9 @@ def _normalize_telemetry(telemetry):
 		"estimated_wait_minutes": normalized["estimated_wait_minutes"],
 		"status": normalized["status"],
 	}
+	if "reporting_interval_seconds" in normalized:
+		result["reporting_interval_seconds"] = normalized["reporting_interval_seconds"]
+	return result
 
 
 def parse_event(event):
@@ -215,7 +228,10 @@ def _configured_reporting_interval():
 
 def process_telemetry(telemetry, state_store, reporting_interval_seconds=None):
 	processed = validate_telemetry(telemetry)
-	if reporting_interval_seconds is None:
+	message_interval = processed.pop("reporting_interval_seconds", None)
+	if message_interval is not None:
+		reporting_interval_seconds = message_interval
+	elif reporting_interval_seconds is None:
 		reporting_interval_seconds = _configured_reporting_interval()
 	processed["estimated_wait_minutes"] = calculate_wait_time(
 		processed["occupancy"],

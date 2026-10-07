@@ -44,23 +44,9 @@ function applyCalculationLimit(telemetry) {
 }
 
 function ReportIntro({ data, telemetryStatus }) {
-  const summary = !data.lastUpdated
-    ? 'Live crowd metrics will appear when telemetry is available.'
-    : telemetryStatus === 'disconnected'
-      ? 'The dashboard cannot reach the telemetry service. Showing the last received reading.'
-      : telemetryStatus === 'stale'
-        ? 'Last-known telemetry is still displayed while the service catches up. Treat these values as stale until the next refresh.'
-        : data.status === 'red'
-          ? 'Telemetry recovered and is updating normally. Crowd levels are approaching the calculated threshold.'
-          : data.status === 'yellow'
-            ? 'Telemetry recovered and is updating normally. Crowd levels are rising. Review the current flow and queue estimate.'
-            : data.status === 'green'
-              ? 'Telemetry recovered and is updating normally. Crowd levels remain within the calculated threshold.'
-              : 'Live crowd metrics from your monitored space.'
-
   const statusText = telemetryStatus === 'live' ? 'Live telemetry' : telemetryStatus === 'stale' ? 'Telemetry stale' : telemetryStatus === 'disconnected' ? 'Telemetry disconnected' : 'Awaiting telemetry'
 
-  return <section className="facility-intro" aria-labelledby="facility-title"><div><p className="eyebrow">Real-time crowd intelligence</p><h1 id="facility-title">Facility 1</h1><p className="intro-copy">{summary}</p></div><p className={`quiet-status status-${telemetryStatus}`}><span aria-hidden="true">●</span> {statusText}</p></section>
+  return <section className="facility-intro" aria-labelledby="facility-title"><div><p className="eyebrow">Real-time crowd intelligence</p><h1 id="facility-title">Facility 1</h1><p className="intro-copy" aria-hidden="true" /></div><p className={`quiet-status status-${telemetryStatus}`}><span aria-hidden="true">●</span> {statusText}</p></section>
 }
 
 function PrimaryNav({ page, onNavigate }) {
