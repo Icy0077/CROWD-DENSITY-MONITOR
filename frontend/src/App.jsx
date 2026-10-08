@@ -15,7 +15,7 @@ const configuredStaleAfterMs = Number(import.meta.env.VITE_TELEMETRY_STALE_AFTER
 const TELEMETRY_STALE_AFTER_MS = Number.isFinite(configuredStaleAfterMs) && configuredStaleAfterMs > 0 ? configuredStaleAfterMs : DEFAULT_STALE_AFTER_MS
 const MAX_ACTIVITY_ENTRIES = 20
 const MAX_CHART_POINTS = 24
-const CALCULATION_OCCUPANCY_LIMIT = 3
+const CALCULATION_OCCUPANCY_LIMIT = 50
 const TELEMETRY_VALUE_FIELDS = ['facility_id', 'timestamp', 'occupancy', 'capacity', 'inflow', 'outflow', 'estimated_wait_time', 'status', 'utilization']
 const initialState = { facilityId: '', occupancy: null, capacity: null, utilization: null, estimatedWaitTime: null, inflow: null, outflow: null, status: null, lastUpdated: null, chartPoints: [], chartLabels: [], telemetry: [], activityLog: [] }
 
